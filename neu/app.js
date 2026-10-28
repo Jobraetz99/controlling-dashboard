@@ -178,8 +178,28 @@ function secClub(){
   return h+'</section>';
 }
 
-// 4 · Auslastung je Tag und Standort: gebuchte Patientenminuten ÷ anwesende
-//     Soll-Minuten. Wochenwerte sind Summen über die Tage, nicht Mittel der Tage.
+// 4 · Auslastung je Tag und Standort.
+//     Werneck: Messung des Patientenchecker-Praxismanagements (bereinigte
+//     Auslastung = geplante Patientenminuten ÷ verfügbare Minuten ohne
+//     Blocker, Pausen und Fahrzeiten; brutto = ÷ Arbeitsminuten).
+//     Kitzingen: gebuchte Patientenminuten ÷ anwesende Soll-Minuten aus
+//     Medifox, weil es dort keine Patientenchecker-Messung gibt.
+const PC_LOC={'KIMOJO Physio':'wp','KIMOJO Ergo':'we'};
+function pcTag(ymd,site){
+  const q=D.kenn&&D.kenn.werneck;const k=PC_LOC[site];if(!q||!k)return null;
+  const t=(q.tage||[]).find(x=>x.ds===ymd);const h=t&&t.loc&&t.loc[k]&&t.loc[k].heute;
+  if(!h||!(h.wm>0))return null;
+  return{geb:h.pg||0,kap:h.vm||0,kapBrutto:h.wm||0,pct:h.vm>0?(h.pg||0)/h.vm*100:null,brutto:h.wm>0?(h.pg||0)/h.wm*100:null};
+}
+// Ein Tag, egal welche Quelle: {pct, geb, kap, quelle, brutto?, offen?}
+function auslWert(ymd,site){
+  if(PC_LOC[site]){const p=pcTag(ymd,site);return p?Object.assign(p,{quelle:'pc'}):{pct:null,geb:0,kap:0,quelle:'pc',fehlt:true};}
+  const a=auslTag(ymd,site);return{pct:a.pct,geb:a.gebucht,kap:a.anw,quelle:'kal',offen:a.offen,keineDaten:a.keineDaten};
+}
+function auslSumme(tage,site){
+  let geb=0,kap=0;tage.forEach(y=>{const a=auslWert(y,site);if(a.pct===null)return;geb+=a.geb;kap+=a.kap;});
+  return kap>0?geb/kap*100:null;
+}
 function secAuslastung(){
   const sites=sitesAktiv();const h0=heute();
   const tage=[];for(let d=new Date(h0);tage.length<10;d=plusTage(d,-1)){if(d.getDay()>=1&&d.getDay()<=5)tage.unshift(ymdP(d));}
@@ -187,18 +207,24 @@ function secAuslastung(){
   const vorwoche=woche.map(y=>ymdP(plusTage(ausYmd(y),-7)));
   const zr=tageImZeitraum(getActiveMonths()).filter(y=>{const d=ausYmd(y).getDay();return d>=1&&d<=5&&y<ymdP(h0);});
   const amp=v=>ampelPill(v,90,80);
-  let h=`<section class="sec"><div class="sec-h"><h2>Auslastung</h2><span class="sub">Gebuchte Zeit ÷ anwesende Soll-Zeit</span></div>`;
+  let h=`<section class="sec"><div class="sec-h"><h2>Auslastung</h2><span class="sub">Werneck: Patientenchecker, bereinigt · Kitzingen: Kalender</span></div>`;
   h+='<div class="grid g3">';
   sites.forEach(s=>{
-    h+=`<div class="kpi"><div class="l">${siteTag(s)}</div><div class="v">${pctS(auslZeitraum(woche,s))}</div><div class="s">diese Woche · Vorwoche <b>${pctS(auslZeitraum(vorwoche,s))}</b> · ø ${esc(zeitraumLabel())} <b>${pctS(auslZeitraum(zr,s))}</b></div></div>`;
+    h+=`<div class="kpi"><div class="l">${siteTag(s)}</div><div class="v">${pctS(auslSumme(woche,s))}</div><div class="s">diese Woche · Vorwoche <b>${pctS(auslSumme(vorwoche,s))}</b> · ø ${esc(zeitraumLabel())} <b>${pctS(auslSumme(zr,s))}</b></div></div>`;
   });
   h+='</div>';
   h+='<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Tag</th>'+sites.map(s=>`<th class="r">${esc(sn(s))}</th>`).join('')+'</tr></thead><tbody>';
   tage.forEach(y=>{
     const d=ausYmd(y);
-    h+=`<tr${y===ymdP(h0)?' class="today"':''}><td>${esc(fDat(d))}</td>`+sites.map(s=>{const a=auslTag(y,s);const t=a.anw?`${n1(a.gebucht/60)} / ${n1(a.anw/60)} h`:'';return`<td class="r">${a.offen?'<span class="pill p-n">noch kein Export</span>':a.keineDaten?'<span class="pill p-n">vor thevea</span>':amp(a.pct)} <span class="c-m" style="font-size:11px">${t}</span></td>`;}).join('')+'</tr>';
+    h+=`<tr${y===ymdP(h0)?' class="today"':''}><td>${esc(fDat(d))}</td>`+sites.map(s=>{
+      const a=auslWert(y,s);
+      if(a.offen)return'<td class="r"><span class="pill p-n">noch kein Export</span></td>';
+      if(a.keineDaten)return'<td class="r"><span class="pill p-n">vor thevea</span></td>';
+      if(a.pct===null)return'<td class="r"><span class="pill p-n">—</span></td>';
+      const sub=a.quelle==='pc'?`brutto ${n1(a.brutto)} % · ${n1(a.geb/60)} / ${n1(a.kap/60)} h`:`${n1(a.geb/60)} / ${n1(a.kap/60)} h`;
+      return`<td class="r">${amp(a.pct)} <span class="c-m" style="font-size:11px">${sub}</span></td>`;}).join('')+'</tr>';
   });
   h+='</tbody></table></div>';
-  h+='<p class="hint">Werneck aus dem thevea-Kalender (auch geplante Termine), Kitzingen aus dem Medifox-Umsatzexport bis zum letzten Exporttag. Anwesende Zeit = Vertragszeit ohne Urlaub, Krankheit, Fortbildung. Ampel: ≥ 90 % grün, ≥ 80 % gelb.</p>';
+  h+='<p class="hint">Werneck aus der Tagesmessung des Patientenchecker-Praxismanagements: bereinigt = geplante Patientenminuten ÷ verfügbare Minuten ohne Blocker, Pausen und Fahrzeiten; brutto = ÷ Arbeitsminuten. Kitzingen aus dem Medifox-Umsatzexport: gebuchte Minuten ÷ anwesende Soll-Minuten. Wochen- und Zeitraumwerte sind Summenquotienten. Ampel: ≥ 90 % grün, ≥ 80 % gelb.</p>';
   return h+'</section>';
 }
