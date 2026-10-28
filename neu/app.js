@@ -8,7 +8,7 @@ const PAGES=[
   {id:'erbracht',l:'Erbracht'},
   {id:'vorschau',l:'Jahresvorschau'},
   {id:'planist',l:'Plan vs. Ist'},
-  {id:'auslastung',l:'Auslastung',alt:true},
+  {id:'auslastung',l:'Auslastung'},
   {id:'termine',l:'Terminvergabe',alt:true},
   {id:'therapeuten',l:'Therapeuten',alt:true},
   {id:'krankenstand',l:'Krankenstand',alt:true},
@@ -83,7 +83,7 @@ function rNav(){
 function rPage(){
   const el=document.getElementById('page');if(!el)return;
   const p=PAGES.find(x=>x.id===page)||PAGES[0];
-  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='vorschau'?pVorschau():p.id==='planist'?pPlanIst():pAlt(p);
+  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='vorschau'?pVorschau():p.id==='planist'?pPlanIst():p.id==='auslastung'?pAuslastung():pAlt(p);
   window.scrollTo({top:0});
 }
 function pAlt(p){
@@ -445,4 +445,60 @@ function cumChart(labels,istArr,planArr,lIst,lPlan){
   s+=`<text x="${W-pd.r+6}" y="${y(l.ist)+4}" font-size="11" fill="#BE3A30" font-family="${F}" font-weight="700">${fmK(l.ist)}</text><text x="${W-pd.r+6}" y="${y(l.plan)+4}" font-size="10" fill="#3C5A80" font-family="${F}" font-weight="700" opacity=".8">${fmK(l.plan)}</text></svg>`;
   s+=`<div style="display:flex;gap:18px;justify-content:center;margin-top:6px;font-size:11.5px;color:var(--muted);font-weight:600"><span><span style="display:inline-block;width:18px;height:3px;background:var(--red);border-radius:2px;vertical-align:middle;margin-right:5px"></span>${esc(lIst)} kumuliert</span><span><span style="display:inline-block;width:18px;height:3px;background:var(--blue);opacity:.6;border-radius:2px;vertical-align:middle;margin-right:5px"></span>${esc(lPlan)} kumuliert</span></div>`;
   return s;
+}
+
+
+// ── Auslastung ───────────────────────────────────────────────────────────
+// Dieselben Quellen wie auf der Übersicht: Werneck aus der Patientenchecker-
+// Tagesmessung (bereinigt), Kitzingen aus dem Medifox-Kalender. Der Weekly
+// Tracker steht als von Hand gepflegter Vergleichswert daneben.
+function wochenImZeitraum(){
+  const h0=heute(),hs=ymdP(h0);const tage=tageImZeitraum(getActiveMonths()).filter(y=>{const d=ausYmd(y).getDay();return d>=1&&d<=5&&y<=hs;});
+  const map={};tage.forEach(y=>{const d=ausYmd(y);const kw=tvWoche(d);(map[kw]=map[kw]||{kw,tage:[],von:y}).tage.push(y);});
+  return Object.values(map).sort((a,b)=>a.kw-b.kw);
+}
+function trackerWoche(kw,site){
+  const q=site==='PF im Park'?D.auslP:D.auslK;const e=(q||[]).find(x=>x.kw===kw);if(!e)return null;
+  return site==='KIMOJO Ergo'?e.ergo:e.physio;
+}
+function auslPersonen(tage){
+  const out=[];const tset=new Set(tage);
+  // Werneck: Patientenchecker-Therapeutenliste je Tag
+  const q=D.kenn&&D.kenn.werneck;const pc={};
+  (q&&q.tage||[]).forEach(t=>{if(!tset.has(t.ds))return;Object.keys(PC_LOC).forEach(site=>{const l=t.loc&&t.loc[PC_LOC[site]];if(!l||!l.heute||!sitesAktiv().includes(site))return;(l.heute.thListe||[]).forEach(x=>{const nm=(()=>{const t=String(x.name||'').trim();const i=t.lastIndexOf(' ');return i>0?t.slice(i+1)+', '+t.slice(0,i):t;})();const k=site+'|'+nm;const a=pc[k]||(pc[k]={name:nm,site,pm:0,vm:0,wm:0,tage:0});a.pm+=x.pm||0;a.vm+=x.vm||0;a.wm+=x.wm||0;if((x.wm||0)>0)a.tage++;});});});
+  Object.values(pc).forEach(a=>{if(a.wm>0)out.push({name:a.name,site:a.site,pct:a.vm>0?a.pm/a.vm*100:null,brutto:a.pm/a.wm*100,geb:a.pm,kap:a.vm,tage:a.tage,quelle:'pc'});});
+  // Kitzingen: Kalender je Person
+  if(sitesAktiv().includes('PF im Park')){
+    const {idx}=auslIndex();const geb={};
+    D.raw.forEach(r=>{if(rowSite(r)!=='PF im Park'||!r.dateKey||!(r.durMin>0))return;if(/ausfallrechnung/i.test(r.leistung||''))return;const p=r.dateKey.split('-');const y=p[0]+'-'+String(p[1]).padStart(2,'0')+'-'+String(p[2]).padStart(2,'0');if(!tset.has(y))return;geb[r.name]=(geb[r.name]||0)+r.durMin;});
+    D.ctrl.filter(t=>t.s==='PF im Park'&&t.tag).forEach(t=>{let kap=0,n=0;tage.forEach(y=>{const d=t.tag[y];if(d&&d.anw>0){kap+=d.anw;n++;}});const g=geb[t.n]||0;if(kap>0||g>0)out.push({name:t.n,site:'PF im Park',pct:kap>0?g/kap*100:null,brutto:null,geb:g,kap,tage:n,quelle:'kal'});});
+  }
+  return out.sort((a,b)=>(b.pct||0)-(a.pct||0));
+}
+function pAuslastung(){
+  const sites=sitesAktiv(),h0=heute();
+  const wochen=wochenImZeitraum();
+  const woche=[];for(let i=0;i<5;i++)woche.push(ymdP(plusTage(montag(h0),i)));
+  const vorwoche=woche.map(y=>ymdP(plusTage(ausYmd(y),-7)));
+  const zr=[].concat(...wochen.map(w=>w.tage));
+  const amp=v=>ampelPill(v,90,80);
+  let h=`<section class="sec"><div class="sec-h"><h2>Auslastung</h2><span class="sub">${esc(zeitraumLabel())} · Werneck: Patientenchecker bereinigt · Kitzingen: Kalender</span></div><div class="grid g3">`;
+  sites.forEach(s=>{h+=`<div class="kpi"><div class="l">${siteTag(s)}</div><div class="v">${pctS(auslSumme(zr,s))}</div><div class="s">${esc(zeitraumLabel())} · diese Woche <b>${pctS(auslSumme(woche,s))}</b> · Vorwoche <b>${pctS(auslSumme(vorwoche,s))}</b></div></div>`;});
+  h+='</div></section>';
+  // Wochen
+  h+=`<section class="sec"><div class="sec-h"><h2>Nach Kalenderwoche</h2><span class="sub">Messung · daneben der Weekly Tracker (von Hand)</span></div><div class="tbl-wrap"><table><thead><tr><th>KW</th><th>Montag</th>${sites.map(s=>`<th class="r">${esc(sn(s))}</th><th class="r c-m">Tracker</th>`).join('')}</tr></thead><tbody>`;
+  wochen.slice().reverse().forEach(w=>{
+    h+=`<tr${w.tage.includes(ymdP(h0))?' class="today"':''}><td>KW ${w.kw}</td><td class="c-m">${esc(fDat(ausYmd(w.von)).replace(/^\S+\s/,''))}</td>`+sites.map(s=>{const v=auslSumme(w.tage,s),t=trackerWoche(w.kw,s);return`<td class="r">${amp(v)}</td><td class="r c-m">${t==null?'—':n1(t)+' %'}</td>`;}).join('')+'</tr>';
+  });
+  h+='</tbody></table></div><p class="hint">Der Tracker-Wert stammt aus dem Blatt „Auslastung“ des Weekly KPI Trackers und wird manuell eingetragen; Abweichungen zur Messung sind normal, weil dort anders gerechnet wird.</p></section>';
+  // Wochentage
+  h+=`<section class="sec"><div class="sec-h"><h2>Nach Wochentag</h2><span class="sub">${esc(zeitraumLabel())} · wo entstehen die Lücken?</span></div><div class="tbl-wrap"><table><thead><tr><th>Wochentag</th>${sites.map(s=>`<th class="r">${esc(sn(s))}</th>`).join('')}</tr></thead><tbody>`;
+  ['Montag','Dienstag','Mittwoch','Donnerstag','Freitag'].forEach((wd,i)=>{const t=zr.filter(y=>ausYmd(y).getDay()===i+1);h+=`<tr><td>${wd}</td>`+sites.map(s=>`<td class="r">${amp(auslSumme(t,s))} <span class="c-m" style="font-size:11px">${t.length} Tage</span></td>`).join('')+'</tr>';});
+  h+='</tbody></table></div></section>';
+  // Therapeut:innen
+  const pers=auslPersonen(zr);
+  h+=`<section class="sec"><div class="sec-h"><h2>Je Therapeut:in</h2><span class="sub">${pers.length} Personen · ${esc(zeitraumLabel())}</span></div><div class="tbl-wrap"><table><thead><tr><th>Therapeut:in</th><th>Standort</th><th class="r">Auslastung</th><th class="r">brutto</th><th class="r">Patientenzeit</th><th class="r">verfügbar</th><th class="r">Tage</th></tr></thead><tbody>`;
+  pers.forEach(p=>{h+=`<tr><td>${esc(p.name)}</td><td>${siteTag(p.site)}</td><td class="r">${amp(p.pct)}</td><td class="r c-m">${p.brutto==null?'—':n1(p.brutto)+' %'}</td><td class="r">${n1(p.geb/60)} h</td><td class="r">${n1(p.kap/60)} h</td><td class="r c-m">${p.tage}</td></tr>`;});
+  h+='</tbody></table></div><p class="hint">Werneck: Patientenminuten ÷ verfügbare Minuten je Person aus der Patientenchecker-Messung, brutto gegen die Arbeitsminuten. Kitzingen: gebuchte Minuten ÷ anwesende Soll-Minuten aus Medifox. Ampel: ≥ 90 % grün, ≥ 80 % gelb.</p></section>';
+  return h;
 }
