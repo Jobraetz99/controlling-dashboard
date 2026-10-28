@@ -6,7 +6,7 @@
 const PAGES=[
   {id:'uebersicht',l:'Übersicht'},
   {id:'erbracht',l:'Erbracht'},
-  {id:'vorschau',l:'Jahresvorschau',alt:true},
+  {id:'vorschau',l:'Jahresvorschau'},
   {id:'planist',l:'Plan vs. Ist',alt:true},
   {id:'auslastung',l:'Auslastung',alt:true},
   {id:'termine',l:'Terminvergabe',alt:true},
@@ -83,7 +83,7 @@ function rNav(){
 function rPage(){
   const el=document.getElementById('page');if(!el)return;
   const p=PAGES.find(x=>x.id===page)||PAGES[0];
-  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():pAlt(p);
+  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='vorschau'?pVorschau():pAlt(p);
   window.scrollTo({top:0});
 }
 function pAlt(p){
@@ -298,4 +298,80 @@ function pErbracht(){
   // Methodik
   h+=`<section class="sec"><details><summary style="cursor:pointer;font-weight:600">Wie gerechnet wird</summary><p class="hint" style="margin-top:8px">Jeder Kalender-Slot zählt einzeln, zwei 20-Minuten-Termine sind zwei KG. Preis je Termin: zuerst der Wert, den thevea für die Verordnung ausweist (Verordnungswert-Prognose, inklusive Privat-, Beihilfe-, BG-Sätzen und Hausbesuchspauschale), sonst das Heilmittel nach der GKV-Preisliste 2026 plus Hausbesuchspauschale je Besuch, zuletzt der Standardsatz Krankengymnastik. Termine ohne Status zählen mit Planwert, Ausfall (ausgefallen oder abgesagt) mit dem Heilmittelwert. Reservierungen sind Patiententermine ohne Verordnung bei Behandler:innen mit mindestens ${TV_BEHANDLER_MIN} Rezeptterminen: 20 Min = KG 29,63 €, 30 Min = MLD-30 35,97 €, 45 Min = MLD-45 53,94 €, andere Längen als Vielfache von 20 Min KG. Blocker zählen nicht. Ab 27.07.2026 (Ergo 01.08.) ersetzt der thevea-Kalender die Medifox-Exporte für KIMOJO; Kitzingen bleibt Medifox ohne Club, T-RENA und Präventionskurse.</p></details></section>`;
   return h;
+}
+
+
+// ── Jahresvorschau ───────────────────────────────────────────────────────
+// Rollierende Planung: abgeschlossene Monate mit Ist (BWA), laufender und
+// künftige Monate mit Plan. Der Zeitraumfilter spielt hier keine Rolle, der
+// Standortfilter schon. Erbracht ist die Kalendersicht als zweite Ist-Spur.
+let fcMode='einnahmen';
+function setFC(m){fcMode=m;rPage();}
+function vorschauDaten(){
+  const now=new Date(),cur=now.getMonth();
+  const kim=aS==='Alle'||aS==='KIMOJO Gesamt'||aS==='KIMOJO Physio'||aS==='KIMOJO Ergo',pf=aS==='Alle'||aS==='PF im Park';
+  const therapists=D.ctrl.filter(t=>matchS(t.s)),theraNames=new Set(therapists.map(t=>t.n));
+  const erbM={};D.raw.forEach(r=>{if(!r.month||!tvRowPasst(r,theraNames))return;erbM[r.month]=(erbM[r.month]||0)+r.price;});
+  const plan=(key,m)=>{let v=0;if(kim&&D.planK.dashboard)v+=D.planK.dashboard.therapie[key+'_'+m]||0;if(pf&&D.planP.dashboard)v+=D.planP.dashboard.therapie[key+'_'+m]||0;return v;};
+  return MN.map((m,i)=>{
+    const bK=getBWA(D.bwaK,m),bP=getBWA(D.bwaP,m);
+    let ein=0,kosten=0,gewinn=0,hasIst=false;
+    if(kim&&bK){ein+=bK.umsatz;kosten+=bK.gesamtkosten;gewinn+=bK.ergebnis;hasIst=true;}
+    if(pf&&bP){ein+=bP.umsatz;kosten+=bP.gesamtkosten;gewinn+=bP.ergebnis;hasIst=true;}
+    const useIst=hasIst&&i<cur;
+    const p={ein:plan('einnahmen',m),kosten:plan('kosten',m),gewinn:plan('gewinn',m)};
+    const ist={ein,kosten,gewinn,erbracht:erbM[i+1]||0};
+    return{m,i,isCurrent:i===cur,useIst,hasIst,ist,plan:p,fc:{ein:useIst?ein:p.ein,kosten:useIst?kosten:p.kosten,gewinn:useIst?gewinn:p.gewinn,erbracht:useIst?(ist.erbracht||ein):p.ein}};
+  });
+}
+function pVorschau(){
+  if(!D.planK.dashboard&&!D.planP.dashboard)return'<section class="sec"><div class="empty">Keine Plandaten geladen.</div></section>';
+  const data=vorschauDaten(),cur=new Date().getMonth();
+  const sum=(k,src)=>data.reduce((s,d)=>s+d[src][k],0);
+  const fc={ein:sum('ein','fc'),kosten:sum('kosten','fc'),gewinn:sum('gewinn','fc'),erbracht:sum('erbracht','fc')},pl={ein:sum('ein','plan'),kosten:sum('kosten','plan'),gewinn:sum('gewinn','plan')};
+  const istM=data.filter(d=>d.useIst);
+  const trend=k=>istM.length?istM.reduce((s,d)=>s+d.fc[k],0)/istM.length*12:null;
+  const delta=(ist,plan,inv)=>{if(!plan)return'';const d=(ist-plan)/Math.abs(plan)*100;const ok=inv?d<=0:d>=0;return`<span class="pill ${ok?'p-g':'p-r'}">${d>=0?'+':''}${n1(d)} % zum Plan</span>`;};
+  const lastIst=data.reduce((l,d)=>d.useIst?d.i:l,-1);const istBis=lastIst>=0?'Jan – '+MN[lastIst]:'—';const fehlt=data.filter(d=>d.i<cur&&!d.useIst).map(d=>d.m);
+  let h=`<section class="sec"><div class="sec-h"><h2>Jahresvorschau ${new Date().getFullYear()}</h2><span class="sub">Ist ${istBis} (BWA) + Plan ${MN[cur]} – Dez · ${esc(sn(aS))}${fehlt.length?' · BWA fehlt für '+fehlt.join(', ')+' (Plan eingesetzt)':''}</span></div><div class="grid g3">`;
+  h+=`<div class="kpi big"><div class="l">Einnahmen Jahresende</div><div class="v">${fmK(fc.ein)}</div><div class="s">${delta(fc.ein,pl.ein)} · Plan <b>${fmK(pl.ein)}</b></div><div class="s">Erbracht statt BWA: <b>${fmK(fc.erbracht)}</b>${trend('ein')?` · Trend <b>${fmK(trend('ein'))}</b>`:''}</div></div>`;
+  h+=`<div class="kpi big"><div class="l">Kosten Jahresende</div><div class="v">${fmK(fc.kosten)}</div><div class="s">${delta(fc.kosten,pl.kosten,true)} · Plan <b>${fmK(pl.kosten)}</b></div></div>`;
+  h+=`<div class="kpi big"><div class="l">Gewinn Jahresende</div><div class="v ${fc.gewinn>=0?'c-g':'c-r'}">${fmK(fc.gewinn)}</div><div class="s">${delta(fc.gewinn,pl.gewinn)} · Plan <b>${fmK(pl.gewinn)}</b></div><div class="s">Erbracht − Kosten: <b>${fmK(fc.erbracht-fc.kosten)}</b>${trend('gewinn')?` · Trend <b>${fmK(trend('gewinn'))}</b>`:''}</div></div>`;
+  h+='</div><p class="hint">Trend = Durchschnitt der abgeschlossenen Monate auf zwölf Monate hochgerechnet. „Erbracht“ ersetzt in den Ist-Monaten den BWA-Umsatz durch den Kalenderwert.</p></section>';
+  // Verlauf
+  const key=fcMode==='einnahmen'?'ein':fcMode;
+  const label={einnahmen:'Einnahmen',kosten:'Kosten',gewinn:'Gewinn'}[fcMode];
+  let cumFC=0,cumPl=0;data.forEach(d=>{cumFC+=d.fc[key];cumPl+=d.plan[key];d.cumFC=cumFC;d.cumPl=cumPl;});
+  h+=`<section class="sec"><div class="sec-h"><h2>Verlauf ${esc(label)}</h2><div class="seg">${['einnahmen','kosten','gewinn'].map(m=>`<button class="${fcMode===m?'a':''}" onclick="setFC('${m}')">${{einnahmen:'Einnahmen',kosten:'Kosten',gewinn:'Gewinn'}[m]}</button>`).join('')}</div></div>`;
+  h+=vorschauChart(data,label);
+  // Monatstabelle
+  h+=`<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Monat</th><th></th><th class="r">${esc(label)}</th><th class="r">Plan</th><th class="r">Abweichung</th><th class="r">Kumuliert</th><th class="r">Plan kumuliert</th></tr></thead><tbody>`;
+  data.forEach(d=>{
+    const v=d.fc[key],p=d.plan[key];const dv=d.useIst&&p?(v-p)/Math.abs(p)*100:null;const ok=fcMode==='kosten'?dv<=0:dv>=0;
+    h+=`<tr${d.isCurrent?' class="today"':''}><td>${d.m}</td><td><span class="pill ${d.useIst?'p-g':'p-n'}">${d.useIst?'Ist':d.isCurrent?'laufend · Plan':d.i<cur?'BWA fehlt · Plan':'Plan'}</span></td><td class="r"><b>${eur0(v)}</b></td><td class="r">${eur0(p)}</td><td class="r">${dv==null?'—':`<span class="pill ${ok?'p-g':'p-r'}">${dv>=0?'+':''}${n1(dv)} %</span>`}</td><td class="r">${eur0(d.cumFC)}</td><td class="r c-m">${eur0(d.cumPl)}</td></tr>`;
+  });
+  h+=`<tr class="sum"><td>Jahr</td><td></td><td class="r">${eur0(cumFC)}</td><td class="r">${eur0(cumPl)}</td><td class="r">${delta(cumFC,cumPl,fcMode==='kosten')}</td><td></td><td></td></tr></tbody></table></div></section>`;
+  return h;
+}
+function vorschauChart(data,label){
+  const W=720,H=220,pd={t:22,r:70,b:26,l:56},cw=W-pd.l-pd.r,ch=H-pd.t-pd.b,cur=new Date().getMonth();
+  const all=[...data.map(d=>d.cumFC),...data.map(d=>d.cumPl)];
+  const maxV=Math.max(...all,1)*1.05,minV=Math.min(0,...all)*1.05,rg=maxV-minV||1;
+  const x=i=>pd.l+i*cw/11,y=v=>pd.t+ch-(v-minV)/rg*ch;
+  const F='-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif';
+  let s=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img" aria-label="Kumulierter Verlauf ${esc(label)}">`;
+  for(let k=0;k<=4;k++){const v=minV+rg/4*k,yp=y(v);s+=`<line x1="${pd.l}" y1="${yp}" x2="${W-pd.r}" y2="${yp}" stroke="#E5E5EA"/><text x="${pd.l-6}" y="${yp+3}" text-anchor="end" font-size="9" fill="#8A8A92" font-family="${F}">${fmK(v)}</text>`;}
+  data.forEach((d,i)=>{s+=`<text x="${x(i)}" y="${H-pd.b+14}" text-anchor="middle" font-size="9" fill="#8A8A92" font-family="${F}" font-weight="600">${d.m}</text>`;});
+  const nx=x(cur)+cw/22;s+=`<line x1="${nx}" y1="${pd.t}" x2="${nx}" y2="${H-pd.b}" stroke="#BE3A30" stroke-dasharray="4,3" opacity=".5"/><text x="${nx}" y="${pd.t-6}" text-anchor="middle" font-size="8" fill="#BE3A30" font-family="${F}" font-weight="700">heute</text>`;
+  const path=(k,from,to)=>{let p='';for(let i=from;i<=to;i++)p+=(i===from?'M ':' L ')+x(i)+' '+y(data[i][k]);return p;};
+  s+=`<path d="${path('cumPl',0,11)}" fill="none" stroke="#3C5A80" stroke-width="2" stroke-dasharray="6,4" opacity=".6"/>`;
+  const last=data.reduce((l,d,i)=>d.useIst?i:l,-1);
+  if(last>=0)s+=`<path d="${path('cumFC',0,last)}" fill="none" stroke="#BE3A30" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`;
+  if(last<11)s+=`<path d="${path('cumFC',Math.max(last,0),11)}" fill="none" stroke="#BE3A30" stroke-width="2.5" stroke-dasharray="8,5" opacity=".55"/>`;
+  data.forEach((d,i)=>{s+=`<circle cx="${x(i)}" cy="${y(d.cumFC)}" r="${d.useIst?4:3}" fill="#BE3A30" stroke="#fff" stroke-width="2" opacity="${d.useIst?1:.5}"/>`;});
+  s+=`<text x="${W-pd.r+6}" y="${y(data[11].cumFC)+4}" font-size="11" fill="#BE3A30" font-family="${F}" font-weight="700">${fmK(data[11].cumFC)}</text>`;
+  s+=`<text x="${W-pd.r+6}" y="${y(data[11].cumPl)+4}" font-size="10" fill="#3C5A80" font-family="${F}" font-weight="700" opacity=".8">${fmK(data[11].cumPl)}</text>`;
+  s+='</svg>';
+  s+='<div style="display:flex;gap:18px;justify-content:center;margin-top:8px;font-size:11.5px;color:var(--muted);font-weight:600"><span><span style="display:inline-block;width:18px;height:3px;background:var(--red);border-radius:2px;vertical-align:middle;margin-right:5px"></span>Ist + Plan kumuliert</span><span><span style="display:inline-block;width:18px;height:3px;background:var(--blue);opacity:.6;border-radius:2px;vertical-align:middle;margin-right:5px"></span>Jahresplan</span></div>';
+  return s;
 }
