@@ -2108,6 +2108,7 @@ function parseBWA(rows){
       d.items[curCat].push({n:b.replace(/^\s+/,''),v});
     }
   }
+  try{d.voll=bwaVoll(rows);}catch(e){console.warn('BWA voll:',e);}
   return d;
 }
 
@@ -2777,4 +2778,25 @@ async function reLaden(){
   }
   D.re={rows,stand};
   return D.re;
+}
+
+// ═══ BWA · VOLLSTÄNDIGE ZEILEN ═══════════════════════════════════════════════
+// Die DATEV-BWA (Soll-/Ist-Vergleich) je Monatsblatt: alle Zeilen der
+// kurzfristigen Erfolgsrechnung mit Ist und Plan (Spalte „Plan“ der BWA) und
+// die Konten unter jeder Kostenart. parseBWA hängt das Ergebnis als d.voll an.
+const BWA_KOSTEN_CODES=['1164','1190','1200','1208','1216','1224','1232','1240','1248','1256','1264','1290'];
+function bwaVoll(rows){
+  const z={},kat=[],umsatz=[];let cur=null;
+  const num=v=>{if(v==null||v==='')return 0;const n=typeof v==='number'?v:parseFloat(String(v).replace(/\./g,'').replace(',','.'));return isNaN(n)?0:n;};
+  for(const r of rows||[]){
+    const code=String(r[0]||'').trim(),konto=String(r[1]||'').trim(),name=String(r[2]||'').replace(/\s+/g,' ').trim();
+    if(/^\d{4}$/.test(code)){
+      z[code]={n:name,ist:num(r[3]),plan:num(r[4])};
+      if(BWA_KOSTEN_CODES.includes(code)){cur={code,n:name,ist:num(r[3]),plan:num(r[4]),items:[]};kat.push(cur);}
+      else cur=code==='1006'?{code,items:umsatz}:null;
+      continue;
+    }
+    if(!code&&name&&cur&&(num(r[3])!==0||num(r[4])!==0)&&!/ohne konto-zuordnung/i.test(name))cur.items.push({konto,n:name,ist:num(r[3]),plan:num(r[4])});
+  }
+  return{z,kat,umsatz};
 }

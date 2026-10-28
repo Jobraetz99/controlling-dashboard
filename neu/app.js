@@ -13,7 +13,7 @@ const PAGES=[
   {id:'termine',l:'Terminvergabe'},
   {id:'therapeuten',l:'Therapeuten'},
   {id:'krankenstand',l:'Krankenstand'},
-  {id:'bwa',l:'BWA',alt:true},
+  {id:'bwa',l:'BWA'},
   {id:'cashflow',l:'Cashflow',alt:true},
   {id:'liquiditaet',l:'Liquidität',alt:true}
 ];
@@ -84,7 +84,7 @@ function rNav(){
 function rPage(){
   const el=document.getElementById('page');if(!el)return;
   const p=PAGES.find(x=>x.id===page)||PAGES[0];
-  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='abgerechnet'?pAbgerechnet():p.id==='vorschau'?pVorschau():p.id==='planist'?pPlanIst():p.id==='auslastung'?pAuslastung():p.id==='termine'?pTermine():p.id==='therapeuten'?pTherapeuten():p.id==='krankenstand'?pKrankenstand():pAlt(p);
+  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='abgerechnet'?pAbgerechnet():p.id==='vorschau'?pVorschau():p.id==='planist'?pPlanIst():p.id==='auslastung'?pAuslastung():p.id==='termine'?pTermine():p.id==='therapeuten'?pTherapeuten():p.id==='krankenstand'?pKrankenstand():p.id==='bwa'?pBwa():pAlt(p);
   window.scrollTo({top:0});
 }
 function pAlt(p){
@@ -480,6 +480,79 @@ function pKrankenstand(){
   h+=`<section class="sec"><div class="sec-h"><h2>Je Therapeut:in</h2><span class="sub">${tl.length} Personen mit Krankheitstagen · ${ohne} ohne</span></div><div class="tbl-wrap"><table><thead><tr><th>Therapeut:in</th><th>Standort</th><th class="r">Soll-Tage</th><th class="r">Krank-Tage</th><th class="r">Krank-Std.</th><th class="r">Quote</th><th class="r">Episoden</th><th>Zuletzt</th><th class="r">Urlaub</th><th class="r">Fortb.</th></tr></thead><tbody>`;
   tl.forEach(p=>{const q=p.sollStd?p.krankStd/p.sollStd*100:null;h+=`<tr><td><b>${esc(p.name)}</b></td><td>${siteTag(p.standort)}</td><td class="r">${n0(p.sollTage)}</td><td class="r"><b>${n0(p.krankTage)}</b></td><td class="r">${n0(p.krankStd)}</td><td class="r">${pill(q)}</td><td class="r">${p.episoden}</td><td>${p.letzte?ausYmd(p.letzte).toLocaleDateString('de-DE'):'—'}</td><td class="r c-m">${n0(p.urlaub)}</td><td class="r c-m">${n0(p.fortb)}</td></tr>`;});
   h+='</tbody></table></div><p class="hint">Nur Personen mit Krankheitstagen im Zeitraum; Werneck erst ab dem thevea-Cutover personenscharf, die Tracker-Krankheitstage davor stehen nur in den Monats- und Standortwerten. Episoden = zusammenhängende Krankmeldungen, Urlaub und Fortbildung als Arbeitstage zum Vergleich.</p></section>';
+  return h;
+}
+
+// ── BWA ──────────────────────────────────────────────────────────────────
+// DATEV-BWA je Monat und Betrieb (D.bwaK KIMOJO GmbH, D.bwaP PF im Park).
+// Zeilen und Konten kommen aus d.voll (bwaVoll in data.js), die Plan-Spalte
+// der BWA liefert den Plan je Kostenart; die Gesamtwerte vergleichen
+// zusätzlich mit der internen Planung (planK/planP wie auf Plan vs. Ist).
+const BWA_ENT=[{k:'bwaK',pl:'planK',l:'KIMOJO GmbH',sub:'Physio und Ergo · Werneck',sites:['KIMOJO Physio','KIMOJO Ergo'],col:'var(--primary)'},{k:'bwaP',pl:'planP',l:'PF im Park',sub:'Physio und Fitness im Park · Kitzingen',sites:['PF im Park'],col:'var(--teal)'}];
+function bwaToggle(id){const el=document.getElementById(id);if(el)el.style.display=el.style.display==='none'?'':'none';}
+function bwaSumme(bwa,months){
+  const S={z:{},kat:{},umsatz:{},monate:[],fehlt:[]};
+  months.forEach(m=>{const d=getBWA(bwa,m);if(!d||!d.voll){S.fehlt.push(m);return;}S.monate.push(m);
+    Object.entries(d.voll.z).forEach(([c,x])=>{const a=S.z[c]||(S.z[c]={n:x.n,ist:0,plan:0,pm:0});a.ist+=x.ist;a.plan+=x.plan;if(x.plan)a.pm++;});
+    d.voll.kat.forEach(k=>{const a=S.kat[k.code]||(S.kat[k.code]={code:k.code,n:k.n,ist:0,plan:0,pm:0,items:{}});a.ist+=k.ist;a.plan+=k.plan;if(k.plan)a.pm++;k.items.forEach(i=>{const b=a.items[i.konto+'|'+i.n]||(a.items[i.konto+'|'+i.n]={konto:i.konto,n:i.n,ist:0,plan:0});b.ist+=i.ist;b.plan+=i.plan;});});
+    d.voll.umsatz.forEach(i=>{const b=S.umsatz[i.konto+'|'+i.n]||(S.umsatz[i.konto+'|'+i.n]={konto:i.konto,n:i.n,ist:0,plan:0});b.ist+=i.ist;b.plan+=i.plan;});
+  });
+  return S;
+}
+function pBwa(){
+  const months=getActiveMonths();
+  const ents=BWA_ENT.filter(e=>e.sites.some(s=>matchS(s)));
+  const sub=`${esc(zeitraumLabel())} · ${esc(sn(aS))}`;
+  const z=(S,c)=>(S.z[c]&&S.z[c].ist)||0,zp=(S,c)=>(S.z[c]&&S.z[c].pm===S.monate.length&&S.z[c].plan)||0,kp=(S,x)=>(x.pm===S.monate.length&&x.plan)||0;
+  const planInt=(e,key,S)=>{const p=D[e.pl]&&D[e.pl].dashboard;if(!p)return 0;let v=0;S.monate.forEach(m=>{v+=p.therapie[key+'_'+m]||0;});return v;};
+  const dPill=(ist,plan,inv)=>{if(!plan)return'<span class="pill p-n">kein Plan</span>';const d=(ist-plan)/Math.abs(plan)*100;const gut=inv?d<=0:d>=0;return`<span class="pill ${gut?'p-g':'p-r'}">${d>=0?'+':''}${n1(d)} %</span>`;};
+  let h='';
+  const data=ents.map(e=>({e,S:bwaSumme(D[e.k]||{},months)}));
+  if(!data.some(x=>x.S.monate.length))return`<section class="sec"><div class="sec-h"><h2>BWA</h2><span class="sub">${sub}</span></div><div class="empty">Für den gewählten Zeitraum liegt noch keine BWA vor.</div></section>`;
+  // Übersicht über alle gewählten Betriebe
+  const tot={umsatz:0,kosten:0,personal:0,betrieb:0,ergebnis:0,pUmsatz:0,pKosten:0,pGewinn:0};
+  data.forEach(({e,S})=>{tot.umsatz+=z(S,'1006');tot.kosten+=z(S,'1294');tot.personal+=z(S,'1164');tot.betrieb+=z(S,'1304');tot.ergebnis+=z(S,'1374');tot.pUmsatz+=planInt(e,'einnahmen',S);tot.pKosten+=planInt(e,'kosten',S);tot.pGewinn+=planInt(e,'gewinn',S);});
+  const marge=tot.umsatz?tot.ergebnis/tot.umsatz*100:null,pq=tot.umsatz?tot.personal/tot.umsatz*100:null;
+  const fehlt=[...new Set(data.flatMap(x=>x.S.fehlt))];
+  h+=`<section class="sec"><div class="sec-h"><h2>BWA</h2><span class="sub">${sub} · ${data.map(x=>x.e.l+': '+(x.S.monate.length?x.S.monate[0]+(x.S.monate.length>1?' – '+x.S.monate[x.S.monate.length-1]:''):'keine BWA')).join(' · ')}</span></div><div class="grid">`;
+  h+=`<div class="kpi big"><div class="l">Umsatzerlöse</div><div class="v">${eur0(tot.umsatz)}</div><div class="s">${dPill(tot.umsatz,tot.pUmsatz,false)} interne Planung ${tot.pUmsatz?fmK(tot.pUmsatz):'—'}</div></div>`;
+  h+=`<div class="kpi"><div class="l">Gesamtkosten</div><div class="v">${eur0(tot.kosten)}</div><div class="s">${dPill(tot.kosten,tot.pKosten,true)} Plan ${tot.pKosten?fmK(tot.pKosten):'—'} · Personalquote <b>${pctS(pq)}</b></div></div>`;
+  h+=`<div class="kpi"><div class="l">Ergebnis vor Steuern</div><div class="v ${tot.ergebnis>=0?'c-g':'c-r'}">${eur0(tot.ergebnis)}</div><div class="s">${dPill(tot.ergebnis,tot.pGewinn,false)} Plan ${tot.pGewinn?fmK(tot.pGewinn):'—'}</div></div>`;
+  h+=`<div class="kpi"><div class="l">Umsatzrendite</div><div class="v ${marge==null?'':marge>=20?'c-g':marge>=10?'c-a':'c-r'}">${pctS(marge)}</div><div class="s">Ergebnis vor Steuern ÷ Umsatz · Betriebsergebnis ${eur0(tot.betrieb)}</div></div>`;
+  h+='</div>';
+  if(data.length>1)h+='<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Betrieb</th><th>BWA-Monate</th><th class="r">Umsatz</th><th class="r">Personal</th><th class="r">Gesamtkosten</th><th class="r">Ergebnis v. St.</th><th class="r">Rendite</th><th class="r">Personalquote</th></tr></thead><tbody>'+data.map(({e,S})=>{const u=z(S,'1006'),k=z(S,'1294'),p=z(S,'1164'),g=z(S,'1374');return`<tr><td><span class="site"><span class="dot" style="background:${e.col}"></span>${esc(e.l)}</span></td><td class="c-m">${S.monate.length?S.monate.join(', '):'—'}</td><td class="r"><b>${eur0(u)}</b></td><td class="r">${eur0(p)}</td><td class="r">${eur0(k)}</td><td class="r ${g>=0?'c-g':'c-r'}"><b>${eur0(g)}</b></td><td class="r">${pctS(u?g/u*100:null)}</td><td class="r">${pctS(u?p/u*100:null)}</td></tr>`;}).join('')+'</tbody></table></div>';
+  h+=`<p class="hint">Quelle: DATEV-BWA (Soll-/Ist-Vergleich) je Monatsblatt, BWA KIMOJO.xlsx und BWA PHFIP.xlsx. Die Kacheln vergleichen mit der internen Planung (Dashboard-Plan wie auf Plan vs. Ist, nur für Monate mit BWA); die Kostenarten unten mit der Plan-Spalte der BWA selbst, sofern jeder BWA-Monat einen Plan trägt.${fehlt.length?` Ohne BWA im Zeitraum: ${esc(fehlt.join(', '))}.`:''}</p></section>`;
+  // Je Betrieb: Erfolgsrechnung und Kostenarten mit Konten
+  let uid=0;
+  data.forEach(({e,S})=>{
+    if(!S.monate.length)return;
+    const u=z(S,'1006'),k=z(S,'1294');
+    h+=`<section class="sec"><div class="sec-h"><h2><span class="site"><span class="dot" style="background:${e.col}"></span>${esc(e.l)}</span></h2><span class="sub">${esc(e.sub)} · ${S.monate.length} Monat${S.monate.length>1?'e':''}</span></div>`;
+    // Erfolgsrechnung
+    const er=[['1006','Umsatzerlöse',false],['1124','Sonstige betriebliche Erlöse',false],['1152','Betrieblicher Rohertrag',false],['1294','Gesamtkosten',true],['1304','Betriebsergebnis',false],['1333','Anderer Aufwand (Zinsen, neutral)',true],['1364','Anderer Ertrag',false],['1374','Ergebnis vor Steuern',false]];
+    h+='<div class="tbl-wrap"><table><thead><tr><th>Erfolgsrechnung</th><th class="r">Ist</th><th class="r">% Umsatz</th><th class="r">Plan (BWA)</th><th class="r">Abweichung</th></tr></thead><tbody>';
+    er.forEach(([c,l,inv])=>{if(!S.z[c])return;const ist=z(S,c),pl=zp(S,c);const fett=/^(1152|1294|1304|1374)$/.test(c);h+=`<tr${fett?' class="sum"':''}><td>${esc(l)}</td><td class="r">${fett?'<b>'+eur0(ist)+'</b>':eur0(ist)}</td><td class="r c-m">${u?n1(ist/u*100)+' %':'—'}</td><td class="r c-m">${pl?eur0(pl):'—'}</td><td class="r">${pl?dPill(ist,pl,inv):''}</td></tr>`;});
+    h+='</tbody></table></div>';
+    // Umsatzkonten
+    const uk=Object.values(S.umsatz).filter(i=>Math.abs(i.ist)>=1).sort((a,b)=>Math.abs(b.ist)-Math.abs(a.ist));
+    if(uk.length>1)h+='<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Umsatzkonto</th><th class="r">Ist</th><th class="r">Anteil</th></tr></thead><tbody>'+uk.map(i=>`<tr><td><span class="c-m">${esc(i.konto)}</span> ${esc(i.n)}</td><td class="r">${eur0(i.ist)}</td><td class="r c-m">${u?n1(i.ist/u*100)+' %':'—'}</td></tr>`).join('')+'</tbody></table></div>';
+    // Kostenarten mit aufklappbaren Konten
+    const kats=Object.values(S.kat).filter(x=>Math.abs(x.ist)>=1||x.plan).sort((a,b)=>b.ist-a.ist);
+    const mx=Math.max(...kats.map(x=>x.ist),1);
+    h+=`<div class="sec-h" style="margin-top:18px"><h2 style="font-size:14px">Kostenarten</h2><span class="sub">Zeile anklicken für die Konten</span></div><div class="tbl-wrap"><table><thead><tr><th>Kostenart</th><th class="r">Ist</th><th class="r">% Kosten</th><th class="r">% Umsatz</th><th class="r">Plan (BWA)</th><th class="r">Abweichung</th><th style="min-width:110px"></th></tr></thead><tbody>`;
+    kats.forEach(x=>{const id='bwa'+(++uid);const items=Object.values(x.items).filter(i=>Math.abs(i.ist)>=1||i.plan).sort((a,b)=>Math.abs(b.ist)-Math.abs(a.ist));
+      const xp=kp(S,x);h+=`<tr style="cursor:pointer" onclick="bwaToggle('${id}')"><td><b>${esc(x.n)}</b></td><td class="r"><b>${eur0(x.ist)}</b></td><td class="r c-m">${k?n1(x.ist/k*100)+' %':'—'}</td><td class="r c-m">${u?n1(x.ist/u*100)+' %':'—'}</td><td class="r c-m">${xp?eur0(xp):'—'}</td><td class="r">${xp?dPill(x.ist,xp,true):'<span class="pill p-n">kein Plan</span>'}</td><td><div class="bar"><i style="width:${Math.max(0,x.ist)/mx*100}%;background:${e.col}"></i></div></td></tr>`;
+      if(items.length)h+=`<tr id="${id}" style="display:none"><td colspan="7" style="padding:0 0 8px 0;background:var(--bg)"><table style="min-width:0;margin:0"><tbody>${items.map(i=>`<tr><td style="padding-left:28px"><span class="c-m">${esc(i.konto)}</span> ${esc(i.n)}</td><td class="r">${eur0(i.ist)}</td><td class="r c-m">${x.ist?n1(i.ist/x.ist*100)+' %':'—'}</td><td class="r c-m">${i.plan?eur0(i.plan):''}</td><td></td><td></td><td></td></tr>`).join('')}</tbody></table></td></tr>`;});
+    h+=`<tr class="sum"><td>Gesamtkosten</td><td class="r">${eur0(k)}</td><td class="r">100 %</td><td class="r">${u?n1(k/u*100)+' %':'—'}</td><td class="r">${zp(S,'1294')?eur0(zp(S,'1294')):'—'}</td><td class="r">${zp(S,'1294')?dPill(k,zp(S,'1294'),true):''}</td><td></td></tr></tbody></table></div>`;
+    // Monatsverlauf
+    const ms=months.filter(m=>getBWA(D[e.k]||{},m));
+    if(ms.length>1){
+      h+=`<div class="sec-h" style="margin-top:18px"><h2 style="font-size:14px">Nach Monat</h2><span class="sub">Ist je BWA-Monat</span></div><div class="tbl-wrap"><table><thead><tr><th>Monat</th><th class="r">Umsatz</th><th class="r">Personal</th><th class="r">Sachkosten</th><th class="r">Gesamtkosten</th><th class="r">Ergebnis v. St.</th><th class="r">Rendite</th><th class="r">Personalquote</th></tr></thead><tbody>`;
+      ms.forEach(m=>{const d=getBWA(D[e.k],m);const v=d.voll&&d.voll.z||{};const g=c=>(v[c]&&v[c].ist)||0;const um=g('1006'),pe=g('1164'),ko=g('1294'),eg=g('1374');h+=`<tr><td>${m}</td><td class="r"><b>${eur0(um)}</b></td><td class="r">${eur0(pe)}</td><td class="r">${eur0(ko-pe)}</td><td class="r">${eur0(ko)}</td><td class="r ${eg>=0?'c-g':'c-r'}">${eur0(eg)}</td><td class="r">${pctS(um?eg/um*100:null)}</td><td class="r">${pctS(um?pe/um*100:null)}</td></tr>`;});
+      h+=`<tr class="sum"><td>Summe</td><td class="r">${eur0(u)}</td><td class="r">${eur0(z(S,'1164'))}</td><td class="r">${eur0(k-z(S,'1164'))}</td><td class="r">${eur0(k)}</td><td class="r ${z(S,'1374')>=0?'c-g':'c-r'}">${eur0(z(S,'1374'))}</td><td class="r">${pctS(u?z(S,'1374')/u*100:null)}</td><td class="r">${pctS(u?z(S,'1164')/u*100:null)}</td></tr></tbody></table></div>`;
+    }
+    h+='</section>';
+  });
   return h;
 }
 
