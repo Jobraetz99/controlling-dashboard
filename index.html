@@ -756,12 +756,16 @@ async function tvLaden(){
 function tvHeroSub(filtered,theraNames){
   const tv=filtered.filter(r=>r.src==='thevea'&&tvRowPasst(r,theraNames));
   if(!tv.length)return `<div class="hk-sub">${aM} · aus Praxissoftware</div>`;
-  const s={erbracht:0,offen:0,ausfall:0,reserviert:0};let ng=0;
-  tv.forEach(r=>{s[r.kind]+=r.price;if(r.quelle==='geschaetzt')ng++;});
+  // Oben steht der volle Kalenderwert des Zeitraums. Darunter nur die eine
+  // Frage, die dazu zählt: Wie viel davon liegt schon hinter uns, wie viel
+  // steht noch im Kalender? Geteilt wird nach Termindatum; Medifox-Zeilen
+  // sind immer Vergangenheit. Die feinere Aufteilung (Status, Ausfall,
+  // Reservierung) steht im Abschnitt „Umsatz erbracht · thevea-Kalender".
+  const jetzt=new Date();let erbracht=0,zukunft=0;
+  filtered.forEach(r=>{if(!tvRowPasst(r,theraNames))return;if(r.src==='thevea'&&r.datum>jetzt)zukunft+=r.price;else erbracht+=r.price;});
   const med=filtered.some(r=>r.src!=='thevea'&&tvRowPasst(r,theraNames));
-  return `<div class="hk-sub">${aM} · thevea-Kalender${med?' + Medifox bis 26.07.':''}${D.thevea.bis?' · bis '+D.thevea.bis.toLocaleDateString('de-DE'):''}</div>`
-    +`<div class="hk-sub" style="margin-top:3px">${fmK(s.erbracht)} stattgefunden · ${fmK(s.offen)} ohne Status · ${fmK(s.ausfall)} Ausfall · ${fmK(s.reserviert)} reserviert</div>`
-    +(ng?`<div class="hk-sub" style="color:var(--amber)">${ng} Termine ohne Preis, mit ${fm(TV_STANDARD)} Standardsatz gerechnet</div>`:'');
+  return `<div class="hk-sub">${aM} · thevea-Kalender${med?' + Medifox':''}</div>`
+    +`<div class="hk-sub" style="margin-top:3px">davon ${fm(erbracht)} bereits erbracht · ${fm(zukunft)} in der Zukunft</div>`;
 }
 function rTV(){
   const el=document.getElementById('tvDiv');if(!el)return;
