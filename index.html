@@ -1096,7 +1096,7 @@ async function loadAll(){
 
     // Group 5b: Termine (KIMOJO Physio + Ergo + PHFIP Physio)
     const termineKPhysioP=getSheet(FILES.kpi,'KIMOJO KPI Physio').catch(()=>null);
-    const termineKErgoP=getSheet(FILES.kpi,'KIMOJO KPI E').catch(()=>null);
+    const termineKErgoP=getSheet(FILES.kpi,'KIMOJO KPI Ergo').then(r=>r||getSheet(FILES.kpi,'KIMOJO KPI E')).catch(()=>null);
     const terminePPhysioP=phfipDriveId?gql(`https://graph.microsoft.com/v1.0/drives/${phfipDriveId}/items/${KPI_PHFIP_ID}/workbook/worksheets('PhFiP KPI Physio')/usedRange`).then(r=>r?r.values:null).catch(()=>null):Promise.resolve(null);
 
     // Group 6: Rechnungsübersicht
