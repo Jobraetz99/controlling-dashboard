@@ -741,7 +741,7 @@ async function tvLaden(){
   for(let i=TV_PROG_MONATE-1;i>=0;i--){const d=new Date(j.getFullYear(),j.getMonth()-i,1);monate.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'));}
   const L=f=>loadJSONPfad(f).catch(()=>null);
   D.thevea={rows:[],stat:{},statistik:{},fehlt:[],ok:false,bis:null,medifoxEntfernt:0,personen:{}};
-  const az={};const f4P=L(TV_AZ_F4);
+  const az={};const f4P=L(TV_AZ_F4_VOLL).then(v=>Array.isArray(v)&&v.length?v:L(TV_AZ_F4));
   const [uebAlt,uebWp]=await Promise.all([L(TV_DIR+'Verordnungsuebersicht.json'),L(TV_DIR+'vo_uebersicht_wp.json')]);
   for(const loc of TV_LOCS){
     const [hist,uebLoc,det,...progs]=await Promise.all([
@@ -785,6 +785,7 @@ async function tvLaden(){
 // an derselben Person hängen, werden Tracker-Namen auf den Exportnamen
 // umgeschrieben; der alte Name bleibt als `plan` für die Plan-Suche erhalten.
 const TV_AZ_F4='/12_Code/Controlling/auslastung_historie_f4.json';
+const TV_AZ_F4_VOLL='/12_Code/Controlling/auslastung_historie_f4_voll.json';
 function tvSpanMin(a,b){const x=String(a||'').split(':'),y=String(b||'').split(':');return(+y[0]*60+(+y[1]||0))-(+x[0]*60+(+x[1]||0));}
 function tvWochenStd(rec){return(rec&&rec.zeitspannen||[]).reduce((s,z)=>s+Math.max(0,tvSpanMin(z.from,z.until)),0)/60;}
 function tvGiltIm(rec,jahr,mi){
@@ -819,31 +820,43 @@ function tvStammdaten(jahr,az,f4){
     }
     const cur=recs.find(r=>r.isCurrentlyValid)||recs[0];t.wh=r1(tvWochenStd(cur));t.azQuelle='thevea';
   });
-  // 3. Arbeitszeiten aus Medifox (Kitzingen): Stunden je Monat aus den
-  //    Tagesdaten, nur anwesende Tage; auf Wochenstunden normiert (÷ 4,33),
-  //    weil das Dashboard Wochenstunden je Monat erwartet.
-  const std={},tage={};
+  // 3. Arbeitszeiten aus Medifox (Kitzingen): Soll-Wochenstunden aus dem
+  //    Wochentagsmuster der Tagesdaten. Je Monat und Wochentag gilt die
+  //    häufigste geplante Arbeitszeit (Abwesenheitstage tragen das Soll
+  //    weiterhin), die Summe über Mo–So ist die Vertragswoche – dieselbe
+  //    Logik wie bei thevea, Urlaub drückt die Stunden nicht.
+  const muster={},tage={};
   (Array.isArray(f4)?f4:[]).forEach(day=>{
     const d=String(day&&day.onDay||'');if(!d.startsWith(jahr+'-'))return;const mi=+d.slice(5,7);
+    const wd=new Date(d+'T12:00:00').getDay();
     (tage[mi]=tage[mi]||new Set()).add(d);
+    const gesehen=new Set();
     (day.spalten||[]).forEach(s=>{
-      if(!s||s.IstAbwesend)return;
+      if(!s)return;
       const n=String(s.Nachname||'').trim()+', '+String(s.Vorname||'').trim();if(/club/i.test(n))return;
-      const min=(s.Arbeitszeiten||[]).reduce((a,z)=>a+Math.max(0,tvSpanMin(z.Start,z.Ende)),0);if(min<=0)return;
-      (std[n]=std[n]||{})[mi]=(std[n][mi]||0)+min/60;
+      const min=(s.Arbeitszeiten||[]).reduce((a,z)=>a+Math.max(0,tvSpanMin(z.Start,z.Ende)),0);
+      const m=(muster[n]=muster[n]||{});const mm=(m[mi]=m[mi]||{});const w=(mm[wd]=mm[wd]||[]);
+      w.push(min);gesehen.add(n);
     });
+    // Wer an diesem Tag keine Spalte hat, arbeitet an diesem Wochentag nicht.
+    Object.keys(muster).forEach(n=>{if(gesehen.has(n))return;const mm=(muster[n][mi]=muster[n][mi]||{});(mm[wd]=mm[wd]||[]).push(0);});
   });
-  // Nur Monate, die die Historie (fast) vollständig abdeckt; ein angerissener
-  // Monat würde sonst als Teilzeit aussehen.
-  const voll=mi=>(tage[mi]&&tage[mi].size>=20);
-  Object.keys(std).forEach(n=>{
+  const modus=arr=>{const c={};arr.forEach(v=>{c[v]=(c[v]||0)+1;});return +Object.keys(c).sort((a,b)=>c[b]-c[a]||b-a)[0];};
+  // Mindestens drei Wochen Daten, sonst ist das Muster nicht belastbar.
+  const voll=mi=>(tage[mi]&&tage[mi].size>=15);
+  Object.keys(muster).forEach(n=>{
     let t=findCtrl(n);
     if(!t){t={n,s:'PF im Park',b:'Physio',wh:0,mh:{},quelle:'medifox'};ctrl.push(t);}
     t.mh=t.mh||{};
-    const ks=Object.keys(std[n]).map(Number).filter(voll).sort((a,b)=>b-a);
+    const ks=Object.keys(muster[n]).map(Number).filter(voll).sort((a,b)=>b-a);
     if(!ks.length)return;
-    ks.forEach(mi=>{t.mh[MN[mi-1]]=r1(std[n][mi]/4.33);});
-    if(!t.wh)t.wh=t.mh[MN[ks[0]-1]]||0;
+    let letzte=0;
+    ks.forEach(mi=>{
+      const mm=muster[n][mi];let soll=0;
+      for(let wd=0;wd<7;wd++){if(mm[wd]&&mm[wd].length)soll+=modus(mm[wd]);}
+      t.mh[MN[mi-1]]=r1(soll/60);if(!letzte)letzte=t.mh[MN[mi-1]];
+    });
+    if(letzte)t.wh=letzte;
     t.azQuelle=t.azQuelle?t.azQuelle+'+medifox':'medifox';
   });
   D.ctrl=ctrl;
