@@ -859,8 +859,10 @@ function tvStammdaten(jahr,az,f4,abwes){
     const abw=(abwes[p.suf]||[]).filter(a=>a&&a.personId===p.id);
     const ersterStart=recs.map(x=>String(x.validFrom||'')).filter(Boolean).sort()[0]||'';
     for(let mi=1;mi<=12;mi++){
-      const recsM=recs.filter(x=>tvGiltIm(x,jahr,mi)).sort((a,b)=>String(b.validFrom||'').localeCompare(String(a.validFrom||'')));
-      if(!recsM.length)continue;
+      let recsM=recs.filter(x=>tvGiltIm(x,jahr,mi)).sort((a,b)=>String(b.validFrom||'').localeCompare(String(a.validFrom||'')));
+      // Monate vor dem ersten Datensatz: Wer da schon Termine hatte, arbeitete
+      // nach demselben Muster – thevea exportiert nur die aktuellen Datensätze.
+      if(!recsM.length){const letzterTag=tvYmd(new Date(jahr,mi,0));if(!(erster[p.name]&&erster[p.name]<=letzterTag))continue;recsM=[recs.slice().sort((a,b)=>String(a.validFrom||'').localeCompare(String(b.validFrom||'')))[0]];}
       t.mh[MN[mi-1]]=r1(tvWochenStd(recsM[0]));
       const tage=new Date(jahr,mi,0).getDate();let soll=0,anw=0;
       for(let d=1;d<=tage;d++){
@@ -873,7 +875,8 @@ function tvStammdaten(jahr,az,f4,abwes){
         const wd=TV_WD[dt.getDay()];
         const min=(rec.zeitspannen||[]).filter(z=>z.wochentag===wd).reduce((s,z)=>s+Math.max(0,tvSpanMin(z.from,z.until)),0);
         if(!min)continue;soll+=min;
-        if(!abw.some(a=>String(a.from)<=ymd&&String(a.until)>=ymd))anw+=min;
+        const da=!abw.some(a=>String(a.from)<=ymd&&String(a.until)>=ymd);if(da)anw+=min;
+        (t.tag=t.tag||{})[ymd]={soll:min,anw:da?min:0};
       }
       t.std[MN[mi-1]]={soll:r1(soll/60),anw:r1(anw/60),q:'thevea'};
     }
@@ -931,9 +934,9 @@ function tvStammdaten(jahr,az,f4,abwes){
       const mm=musterMon(mi)||muster[n][mi];const tageM=new Date(jahr,mi,0).getDate();let soll=0,anw=0,ist=0;
       for(let d=1;d<=tageM;d++){
         const dt=new Date(jahr,mi-1,d),ymd=tvYmd(dt);
-        if(histTage.has(ymd)){const h=(hist[n]||{})[ymd];if(!h||!h.min)continue;soll+=h.min;ist++;if(!h.abw)anw+=h.min;continue;}
+        if(histTage.has(ymd)){const h=(hist[n]||{})[ymd];if(!h||!h.min)continue;soll+=h.min;ist++;if(!h.abw)anw+=h.min;(t.tag=t.tag||{})[ymd]={soll:h.min,anw:h.abw?0:h.min};continue;}
         if(feier.has(ymd))continue;
-        const w=mm&&mm[dt.getDay()];if(!w||!w.length)continue;const min=modus(w);soll+=min;anw+=min;
+        const w=mm&&mm[dt.getDay()];if(!w||!w.length)continue;const min=modus(w);if(!min)continue;soll+=min;anw+=min;(t.tag=t.tag||{})[ymd]={soll:min,anw:min};
       }
       if(soll>0)t.std[MN[mi-1]]={soll:r1(soll/60),anw:r1(anw/60),q:'medifox'};
     });
@@ -2721,8 +2724,8 @@ function parseRaw(rows){
     let month=null,week=null,dateObj=null;
     const dv=r[1];
     if(typeof dv==='number'&&dv>40000){dateObj=new Date(Math.round((dv-25569)*86400000));month=dateObj.getUTCMonth()+1;}
-    else{const s=String(dv),m=s.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);if(m){month=parseInt(m[2]);dateObj=new Date(parseInt(m[3]<100?2000+parseInt(m[3]):m[3]),month-1,parseInt(m[1]));}
-    else{const m2=s.match(/(\d{4})-(\d{2})-(\d{2})/);if(m2){month=parseInt(m2[2]);dateObj=new Date(parseInt(m2[1]),month-1,parseInt(m2[3]));}}}
+    else{const s=String(dv),m=s.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);if(m){month=parseInt(m[2]);dateObj=new Date(Date.UTC(parseInt(m[3]<100?2000+parseInt(m[3]):m[3]),month-1,parseInt(m[1])));}
+    else{const m2=s.match(/(\d{4})-(\d{2})-(\d{2})/);if(m2){month=parseInt(m2[2]);dateObj=new Date(Date.UTC(parseInt(m2[1]),month-1,parseInt(m2[3])));}}}
     const clean=String(name).replace(/\s*\((?:Physio|Ergo)\s*(?:-\s*)?#\d+\)\s*/g,'').replace(/\s+/g,' ').trim();
     const billed=String(r[8]||'').toUpperCase()==='WAHR'||r[8]===true;
     const wd=dateObj?(dateObj.getUTCDay()+6)%7:null;

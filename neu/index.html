@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>BM Group · Cockpit</title>
+<link rel="stylesheet" href="styles.css">
+<script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
+</head>
+<body>
+
+<div id="lo"><div class="lb">
+<h1>BM Group</h1>
+<p>Management Cockpit · Controlling</p>
+<button class="l-btn" onclick="signIn()">
+<svg viewBox="0 0 21 21" fill="none"><rect x="1" y="1" width="9" height="9" fill="#F25022"/><rect x="11" y="1" width="9" height="9" fill="#7FBA00"/><rect x="1" y="11" width="9" height="9" fill="#00A4EF"/><rect x="11" y="11" width="9" height="9" fill="#FFB900"/></svg>
+Mit Microsoft anmelden</button>
+<p class="l-err" id="er" style="display:none"></p>
+</div></div>
+
+<div class="loading h" id="ld"><div class="spinner"></div><p id="lt">Verbinde...</p></div>
+
+<div id="db">
+<header class="top"><div class="top-in">
+  <div class="brand">
+    <h1><span>BM Group</span> · Cockpit</h1>
+    <div class="brand-r"><span id="stand"></span><button class="btn" onclick="refreshData()">Aktualisieren</button><button class="btn" onclick="signOut()">Abmelden</button></div>
+  </div>
+  <div class="filters" id="filters"></div>
+  <nav class="nav" id="nav"></nav>
+</div></header>
+<main class="main" id="page"></main>
+<p class="foot">Alte Ansicht: <a href="../" id="altLink">dashboard</a></p>
+</div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
