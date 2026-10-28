@@ -767,6 +767,10 @@ async function tvLaden(){
     });
   }
   const f4=await f4P;
+  // Kitzinger Club-/T-RENA-/Präventionszeilen aus den Umsätzen nehmen; der
+  // Kitzingen-Block zeigt sie nur noch als Hinweis.
+  const extra=r=>r.src!=='thevea'&&String(r.filiale||'')==='PHFIP'&&tvIstKurs(r);
+  D.thevea.kitzExtra=D.raw.filter(extra);D.raw=D.raw.filter(r=>!extra(r));
   if(!D.thevea.rows.length){try{tvStammdaten(jahr,az,f4);}catch(e){console.warn('Stammdaten:',e);}return;}
   const cut=new Date(TV_LOCS[0].cutover+'T00:00:00');
   const vorher=D.raw.length;
@@ -942,25 +946,28 @@ function rTV(){
 // Kursentgelt; er wird daneben als eigene Zahl gezeigt, damit nichts
 // stillschweigend verschwindet. Erkannt wird er am Leistungstext, nicht am
 // Preis — ein Preis kann sich ändern, der Name des Kurses nicht.
-const TV_KURS=/pr(ä|ae)ventionskurs/i;
-function tvIstKurs(r){return TV_KURS.test(String(r.leistung||''));}
+// Kitzingen: Club-Mitgliedschaften, T-RENA-Gruppentraining und Präventionskurse
+// sind kein Therapieumsatz und bleiben überall außen vor (auch die
+// Sammelspalte „Club, PhFiP" im Medifox-Export).
+const TV_KURS=/pr(ä|ae)vention|club|t-?rena/i;
+function tvIstKurs(r){return TV_KURS.test(String(r.leistung||''))||TV_KURS.test(String(r.name||''));}
 function tvKitzingen(months,monthNums){
-  const alle=D.raw.filter(r=>r.src!=='thevea'&&String(r.filiale||'')==='PHFIP'&&monthNums.includes(r.month));
+  const alle=D.raw.filter(r=>r.src!=='thevea'&&String(r.filiale||'')==='PHFIP'&&monthNums.includes(r.month)).concat((D.thevea.kitzExtra||[]).filter(r=>monthNums.includes(r.month)));
   if(!alle.length)return '';
   const agg=()=>({n:0,sum:0,nKurs:0,kurs:0});
   const add=(a,r)=>{if(tvIstKurs(r)){a.nKurs++;a.kurs+=r.price;}else{a.n++;a.sum+=r.price;}};
   const byM={},byT={},byL={},tot=agg();
   alle.forEach(r=>{add(byM[r.month]||(byM[r.month]=agg()),r);add(tot,r);add(byT[r.name]||(byT[r.name]=agg()),r);
     if(!tvIstKurs(r)){const l=byL[r.leistung||'—']||(byL[r.leistung||'—']={n:0,sum:0});l.n++;l.sum+=r.price;}});
-  const z=(label,a,bold)=>`<tr${bold?' style="font-weight:700"':''}><td>${label}</td><td class="r">${a.n}</td><td class="r"><b>${fm(a.sum)}</b></td><td class="r">${a.n?fm(a.sum/a.n):'—'}</td><td class="r" style="color:var(--faint)">${a.nKurs?a.nKurs+' × '+fm(a.kurs/a.nKurs)+' = '+fm(a.kurs):'—'}</td></tr>`;
+  const z=(label,a,bold)=>`<tr${bold?' style="font-weight:700"':''}><td>${label}</td><td class="r">${a.n}</td><td class="r"><b>${fm(a.sum)}</b></td><td class="r">${a.n?fm(a.sum/a.n):'—'}</td><td class="r" style="color:var(--faint)">${a.nKurs?a.nKurs+' · '+fm(a.kurs):'—'}</td></tr>`;
   let h='<div class="st" style="margin-top:32px">🏋️ Kitzingen · PF im Park · Medifox</div>';
-  h+='<div class="tc"><div class="thd"><h3>Nach Monat</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><span class="hdr-badge">ohne Kraft-Präventionskurs (120 €)</span><span class="hdr-badge">'+months.join(', ')+'</span></div></div>';
-  h+='<table><thead><tr><th>Monat</th><th class="r">Behandlungen</th><th class="r">Umsatz</th><th class="r">ø je Behandlung</th><th class="r">Präventionskurse (nicht enthalten)</th></tr></thead><tbody>';
+  h+='<div class="tc"><div class="thd"><h3>Nach Monat</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><span class="hdr-badge">ohne Club, T-RENA und Präventionskurse</span><span class="hdr-badge">'+months.join(', ')+'</span></div></div>';
+  h+='<table><thead><tr><th>Monat</th><th class="r">Behandlungen</th><th class="r">Umsatz</th><th class="r">ø je Behandlung</th><th class="r">Club / T-RENA / Prävention (nicht enthalten)</th></tr></thead><tbody>';
   monthNums.forEach(mi=>{const a=byM[mi];if(a)h+=z(MN[mi-1],a,false);});
   h+=z('Summe',tot,true)+'</tbody></table></div>';
   const tl=Object.keys(byT).map(n=>Object.assign({name:n},byT[n])).sort((a,b)=>b.sum-a.sum);
   h+='<div class="tc"><div class="thd"><h3>Nach Mitarbeiter:in</h3><span class="hdr-badge">'+tl.length+' Personen</span></div>';
-  h+='<table><thead><tr><th>Mitarbeiter:in</th><th class="r">Behandlungen</th><th class="r">Umsatz</th><th class="r">ø je Behandlung</th><th class="r">Präventionskurse (nicht enthalten)</th></tr></thead><tbody>';
+  h+='<table><thead><tr><th>Mitarbeiter:in</th><th class="r">Behandlungen</th><th class="r">Umsatz</th><th class="r">ø je Behandlung</th><th class="r">Club / T-RENA / Prävention (nicht enthalten)</th></tr></thead><tbody>';
   tl.forEach(t=>{h+=z(t.name,t,false);});
   h+=z('Summe',tot,true)+'</tbody></table></div>';
   const ll=Object.keys(byL).map(k=>({l:k,n:byL[k].n,sum:byL[k].sum})).sort((a,b)=>b.sum-a.sum);
