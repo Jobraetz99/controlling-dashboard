@@ -405,6 +405,7 @@ Mit Microsoft anmelden</button>
 <div class="flt" id="flt"></div>
 <div class="sub-tabs" id="secNav">
 <button class="stab a" onclick="navTo('sec-kpi',this)">📊 Übersicht</button>
+<button class="stab" onclick="navTo('sec-erbracht',this)">💶 Erbracht</button>
 <button class="stab" onclick="navTo('sec-forecast',this)">🔮 Jahresvorschau</button>
 <button class="stab" onclick="navTo('sec-planist',this)">📈 Plan vs. Ist</button>
 <button class="stab" onclick="navTo('sec-ausl',this)">⚡ Auslastung</button>
@@ -417,6 +418,9 @@ Mit Microsoft anmelden</button>
 </div>
 
 <div id="sec-kpi"></div><div class="hero" id="hero"></div>
+
+<div id="sec-erbracht"></div><div class="st" onclick="toggleSection(this)">💶 Umsatz erbracht · thevea-Kalender <span class="st-arrow">▼</span></div>
+<div id="tvDiv" class="sec-body" style="max-height:6000px"></div>
 
 <div id="sec-forecast"></div><div class="st" onclick="toggleSection(this)">🔮 Jahresvorschau 2026 · Rollierende Planung <span class="st-arrow">▼</span></div>
 <div id="forecastDiv" class="sec-body" style="max-height:3000px"></div>
@@ -537,6 +541,278 @@ async function getFileContent(fileId){
   return r.ok?r.text():null;
 }
 
+// ═══ THEVEA UMSATZ ═══════════════════════════════════════════════════════════
+// Erbrachter Umsatz aus dem thevea-Kalender für Werneck Physio (_wp) und
+// Werneck Ergo (_we). Die Exporte schreibt Power Automate nach
+// /12_Code/Patientenchecker/Dateien Export/, die Verordnungswert-Prognose
+// samt thevea-Umsatzstatistik nach /12_Code/Controlling/thevea/.
+//
+// Bewertet wird jeder Patiententermin, jeder Kalender-Slot einzeln (zwei
+// 20-Minuten-Termine sind zwei Einheiten). Der Preis kommt in dieser
+// Reihenfolge:
+//   1. thevea-eigener Wert je Einheit aus der Verordnungswert-Prognose
+//      (wertErbrachteBehandlungen ÷ erbrachte Einheiten). Das ist der echte
+//      Preis dieser Verordnung — auch für Privat, Beihilfe und BG, und mit der
+//      Hausbesuchspauschale, die thevea dort schon mitrechnet.
+//   2. Heilmittel direkt am Termin (erweiterter Export) → GKV-Preisliste 2026,
+//      plus Hausbesuchspauschale je Besuch.
+//   3. Heilmittel aus der Verordnungsübersicht → GKV-Preisliste.
+//   4. Standardsatz Krankengymnastik. Wird gezählt und ausgewiesen, damit
+//      sichtbar bleibt, wie viel der Zahl auf Annahme beruht.
+// Ohne Verordnung ist der Termin eine Reservierung: 20 Min = KG, 30 Min =
+// MLD-30, 45 Min = MLD-45 aus der GKV-Liste; andere Längen als Vielfache
+// von 20 Min KG (40 Min = zwei KG). Fehlt die Endzeit (alter Export), gelten 20 Minuten.
+// Status: STATTGEFUNDEN = erbracht; ohne Status = offen und zählt mit
+// Planwert; AUSGEFALLEN/ABGESAGT = Ausfallrechnung in Höhe des
+// Heilmittelwerts. SonstigerTermin (Blocker, Pausen, Kurse) zählt nicht.
+// Ab dem Cutover ersetzt thevea die Medifox-Zeilen von KIMOJO; davor bleibt
+// Medifox die Quelle.
+const TV_DIR='/12_Code/Patientenchecker/Dateien Export/';
+const TV_PROG_DIR='/12_Code/Controlling/thevea/';
+const TV_LOCS=[
+  {suf:'wp',standort:'KIMOJO Physio',cutover:'2026-07-27',prog:'thevea-physio-',hb:{weg:22.78,heim:13.09}},
+  {suf:'we',standort:'KIMOJO Ergo',  cutover:'2026-08-01',prog:'thevea-ergo-',  hb:{weg:28.69,heim:18.71}}
+];
+// Wie viele Monatsdateien der Prognose geladen werden. Jede Datei kennt nur
+// die zu ihrem Zeitpunkt laufenden Rezepte; zusammen decken sie auch die
+// inzwischen abgeschlossenen ab. Neuere Datei gewinnt bei gleicher VO.
+const TV_PROG_MONATE=8;
+// GKV-Preisliste Physio ab 01.01.2026, Ergo ab 01.07.2026 — dieselben Sätze
+// wie im Patientenchecker (werneck.html, HB_PREISE). Reihenfolge entscheidet:
+// Das allgemeine KG steht zuletzt, sonst schluckt es KG-Gerät und KG-ZNS.
+const TV_GKV=[
+  [/zns|bobath|vojta|pnf/i,                   47.06],
+  [/(mld|lymphdrainage)[\s\S]*?\b60\b/i,      71.94],
+  [/(mld|lymphdrainage)[\s\S]*?\b45\b/i,      53.94],
+  [/mld|lymphdrainage/i,                      35.97],
+  [/manuelle\s*therapie|\bmt\b/i,             35.59],
+  [/bewegungsbad/i,                           33.87],
+  [/\bgruppe\b/i,                              8.43],
+  [/traktion/i,                                8.63],
+  [/hirnleistung|neuropsycholog|\bhlt\b/i,    59.27],
+  [/psychisch[\s-]*funktionell|\bpfb\b/i,     98.79],
+  [/sensomotorisch|\bspb\b/i,                 79.03],
+  [/motorisch[\s-]*funktionell|\bmfb\b/i,     59.27],
+  [/ger(ä|ae)t|\bkgg\b/i,                     55.81],
+  [/erstbefund|diagnostik/i,                  36.61],
+  [/warmpack/i,                               16.16],
+  [/hei(ß|ss)e\s*rolle/i,                     13.47],
+  [/wärme|heißluft/i,                          7.43],
+  [/krankengymnastik|\bkg\b|blanko/i,         29.63]
+];
+const TV_STANDARD=29.63;
+const TV_ABGESAGT=/ABGESAGT|ABSAGE|STORN|AUSGEFALLEN|ENTFALLEN|NICHT.?ERSCHIENEN|CANCEL/i;
+function tvGkvPreis(txt){const t=String(txt||'');for(const[re,p]of TV_GKV)if(re.test(t))return p;return null;}
+function tvReservPreis(min){
+  if(!(min>0))min=20;
+  if(min<=20)return 29.63;
+  if(min===30)return 35.97;
+  if(min===45)return 53.94;
+  return Math.ceil(min/20)*29.63;
+}
+function tvNorm(s){return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/\s+/g,' ').trim();}
+// thevea nennt „Angelina Schmitt", die Team-Tabelle „Schmitt, Angie". Gleicher
+// Nachname und gleicher Vornamen-Anfang reichen, wenn der Treffer eindeutig
+// ist; sonst bleibt der thevea-Name stehen und der Therapeut erscheint ohne
+// Stundenbezug.
+function tvCtrlName(vn,nn,ctrl){
+  const key=String(nn||'').trim()+', '+String(vn||'').trim();
+  const nnN=tvNorm(nn),vnN=tvNorm(vn);
+  // Das Ergo-Konto in thevea kürzt Nachnamen auf die Initiale („B., Tabea");
+  // dann entscheidet der Vorname und der Anfangsbuchstabe des Nachnamens.
+  const initial=/^[a-z]\.$/.test(nnN)?nnN.charAt(0):null;
+  const hits=(ctrl||[]).filter(t=>{
+    const m=String(t.n||'').split(',');if(m.length<2)return false;
+    const cn=tvNorm(m[0]),cv=tvNorm(m[1]);
+    if(initial)return cn.charAt(0)===initial&&cv===vnN;
+    if(cn!==nnN)return false;
+    return cv.slice(0,3)===vnN.slice(0,3);
+  });
+  return hits.length===1?hits[0].n:key;
+}
+function tvWoche(d){
+  const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));
+  const dn=(t.getUTCDay()+6)%7;t.setUTCDate(t.getUTCDate()-dn+3);
+  const fw=new Date(Date.UTC(t.getUTCFullYear(),0,4));
+  return 1+Math.round(((t-fw)/864e5-3+(fw.getUTCDay()+6)%7)/7);
+}
+function tvVoMap(ueb){
+  const m={};const nodes=ueb&&ueb.data&&ueb.data.verordnungUebersicht&&ueb.data.verordnungUebersicht.nodes||[];
+  nodes.forEach(n=>{if(n&&n.id!=null)m[n.id]=n;});return m;
+}
+function tvDetMap(det){
+  const m={};(Array.isArray(det)?det:(det?[det]:[])).forEach(ch=>{const d=ch&&ch.data;if(!d)return;
+    Object.keys(d).forEach(k=>{const v=d[k];if(v&&typeof v==='object'&&v.id!=null)m[v.id]=v;});});
+  return m;
+}
+function tvProgMap(files){
+  const m={};
+  (files||[]).forEach(f=>{
+    const nodes=f&&f.prognose&&f.prognose.data&&f.prognose.data.verordnungswertPrognoseStatistik&&f.prognose.data.verordnungswertPrognoseStatistik.nodes||[];
+    nodes.forEach(n=>{
+      const e=+n.behandlungseinheitenErbracht||0,g=+n.behandlungseinheitenGesamt||0;
+      let u=null;
+      if(e>0)u=parseFloat(n.wertErbrachteBehandlungen)/e;
+      else if(g>0)u=parseFloat(n.erwarteterGesamtwert)/g;
+      if(u!=null&&isFinite(u)&&u>0)m[n.verordnungId]={unit:u,hm:n.heilmittel||''};
+    });
+  });
+  return m;
+}
+function tvStatAgg(){return{n:0,erbracht:0,offen:0,ausfall:0,reserviert:0,gesamt:0,nErbracht:0,nOffen:0,nAusfall:0,nReserviert:0,nThevea:0,nGkv:0,nGeschaetzt:0};}
+function tvBerechne(loc,hist,voUeb,voDet,prog,ctrl,jahr){
+  const termine=hist&&hist.data&&hist.data.termine||(Array.isArray(hist)?hist:[]);
+  const cut=new Date(loc.cutover+'T00:00:00');
+  const rows=[],stat={},hbSeen={};
+  termine.forEach(t=>{
+    if(!t||t.__typename!=='PatientenTermin')return;
+    const d=new Date(t.from);if(isNaN(d)||d<cut||d.getFullYear()!==jahr)return;
+    const month=d.getMonth()+1;
+    let durMin=null;if(t.until){const u=new Date(t.until);if(!isNaN(u))durMin=Math.round((u-d)/6e4);}
+    const st=String(t.status||'');
+    const p=t.mitarbeiter&&t.mitarbeiter.person||{};
+    const vo=t.terminVerordnung;
+    let kind,price,quelle,hm;
+    if(!vo||vo.id==null){
+      kind='reserviert';price=tvReservPreis(durMin);quelle='reserviert';hm='Reservierung '+(durMin>0?durMin:20)+' Min';
+    }else{
+      kind=TV_ABGESAGT.test(st)?'ausfall':st==='STATTGEFUNDEN'?'erbracht':'offen';
+      // Der erweiterte Export liefert die Heilmittel der Verordnung als Liste
+      // (z. B. MT und Wärme auf einem Rezept). Welches davon der Slot ist, sagt
+      // thevea nicht; bewertet wird das erste, die Beschriftung nennt alle.
+      const pr=prog[vo.id],ueb=voUeb[vo.id];
+      const hmL=Array.isArray(vo.heilmittel)?vo.heilmittel.filter(Boolean):(vo.heilmittel?[vo.heilmittel]:[]);
+      const hmT=hmL[0]||null;
+      hm=(hmL.length?hmL.map(h=>h.abkuerzung||h.name||'').filter(Boolean).join(';'):'')||(ueb&&ueb.heilmittel)||(pr&&pr.hm)||'';
+      if(pr){price=pr.unit;quelle='thevea';}
+      else{
+        const g=tvGkvPreis(hmT?(hmT.abkuerzung||hmT.name):hm);
+        if(g!=null){price=g;quelle='gkv';}else{price=TV_STANDARD;quelle='geschaetzt';}
+        // Hausbesuchspauschale je Besuch: Patient, Tag, Therapeut — einmal,
+        // auch wenn im Besuch zwei Leistungen stehen. Ohne Angabe, ob Heim
+        // oder Wohnung, gilt der niedrigere Heim-Satz.
+        const hb=hmL.some(h=>h&&h.hausbesuch)||t.patientenTerminArt==='HAUSBESUCH'||!!(voDet[vo.id]&&voDet[vo.id].hausbesuch);
+        if(hb){const k=t.patientId+'|'+d.toDateString()+'|'+p.id;if(!hbSeen[k]){hbSeen[k]=1;price+=loc.hb.heim;}}
+      }
+    }
+    const s=stat[month]||(stat[month]=tvStatAgg());
+    s.n++;s.gesamt+=price;s[kind]+=price;s['n'+kind.charAt(0).toUpperCase()+kind.slice(1)]++;
+    if(quelle==='thevea')s.nThevea++;else if(quelle==='gkv')s.nGkv++;else if(quelle==='geschaetzt')s.nGeschaetzt++;
+    // Der Ergo-Export führt (noch) keinen Mitarbeiter am Termin; die Zeile
+    // bleibt dann dem Standort zugeordnet, nur ohne Therapeut.
+    const name=(p.vorname||p.nachname)?tvCtrlName(p.vorname,p.nachname,ctrl):loc.standort+' · ohne Therapeut';
+    rows.push({name,maId:p.id,month,week:tvWoche(d),price,billed:true,
+      wd:(d.getDay()+6)%7,startMin:d.getHours()*60+d.getMinutes(),durMin:durMin>0?durMin:20,
+      dateKey:d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(),filiale:'KIMOJO',standort:loc.standort,
+      src:'thevea',kind,quelle,hm:hm||'—',status:st,datum:d});
+  });
+  return{rows,stat};
+}
+// Standortfilter für Umsatzzeilen: thevea-Zeilen kennen ihren Standort,
+// Medifox-Zeilen nur den Namen, der über die Team-Tabelle zugeordnet wird.
+function tvRowPasst(r,theraNames){
+  if(aS==='Alle')return true;
+  if(r.standort)return matchS(r.standort);
+  return theraNames.has(r.name);
+}
+async function tvLaden(){
+  const jahr=new Date().getFullYear();
+  const j=new Date(),monate=[];
+  for(let i=TV_PROG_MONATE-1;i>=0;i--){const d=new Date(j.getFullYear(),j.getMonth()-i,1);monate.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'));}
+  const L=f=>loadJSONPfad(f).catch(()=>null);
+  D.thevea={rows:[],stat:{},statistik:{},fehlt:[],ok:false,bis:null,medifoxEntfernt:0};
+  const [uebAlt,uebWp]=await Promise.all([L(TV_DIR+'Verordnungsuebersicht.json'),L(TV_DIR+'vo_uebersicht_wp.json')]);
+  for(const loc of TV_LOCS){
+    const [hist,uebLoc,det,...progs]=await Promise.all([
+      L(TV_DIR+'termine_historie_'+loc.suf+'.json'),
+      loc.suf==='wp'?Promise.resolve(uebWp||uebAlt):L(TV_DIR+'vo_uebersicht_'+loc.suf+'.json'),
+      L(TV_DIR+'verordnung_details_'+loc.suf+'.json'),
+      ...monate.map(m=>L(TV_PROG_DIR+loc.prog+m+'.json'))
+    ]);
+    if(!hist){D.thevea.fehlt.push('termine_historie_'+loc.suf+'.json');continue;}
+    const r=tvBerechne(loc,hist,tvVoMap(uebLoc),tvDetMap(det),tvProgMap(progs),D.ctrl,jahr);
+    D.thevea.rows=D.thevea.rows.concat(r.rows);D.thevea.stat[loc.standort]=r.stat;
+    // thevea-eigene Umsatzstatistik des jeweiligen Monats als Gegenprobe.
+    progs.forEach((f,i)=>{
+      const n=f&&f.umsatzAktuellerMonat&&f.umsatzAktuellerMonat.data&&f.umsatzAktuellerMonat.data.umsatzstatistikMitarbeiterBehandlungen&&f.umsatzAktuellerMonat.data.umsatzstatistikMitarbeiterBehandlungen.nodes;
+      if(!n)return;
+      D.thevea.statistik[loc.standort+'|'+monate[i]]={brutto:n.reduce((s,x)=>s+(parseFloat(x.umsatzBrutto)||0),0),beh:n.reduce((s,x)=>s+(x.anzahlBehandlungen||0),0),stand:f.stand||''};
+    });
+  }
+  if(!D.thevea.rows.length)return;
+  const cut=new Date(TV_LOCS[0].cutover+'T00:00:00');
+  const vorher=D.raw.length;
+  D.raw=D.raw.filter(r=>{
+    if(r.src==='thevea')return false;
+    if(!String(r.filiale||'').startsWith('KIMOJO')||!r.dateKey)return true;
+    const p=r.dateKey.split('-');return new Date(+p[0],+p[1]-1,+p[2])<cut;
+  });
+  D.thevea.medifoxEntfernt=vorher-D.raw.length;
+  D.raw=D.raw.concat(D.thevea.rows);
+  D.thevea.bis=D.thevea.rows.filter(r=>r.kind==='erbracht').reduce((m,r)=>r.datum>m?r.datum:m,null);
+  D.thevea.ok=true;
+  console.log('thevea:',D.thevea.rows.length,'Termine bewertet,',D.thevea.medifoxEntfernt,'Medifox-Zeilen ab Cutover ersetzt');
+}
+function tvHeroSub(filtered,theraNames){
+  const tv=filtered.filter(r=>r.src==='thevea'&&tvRowPasst(r,theraNames));
+  if(!tv.length)return `<div class="hk-sub">${aM} · aus Praxissoftware</div>`;
+  const s={erbracht:0,offen:0,ausfall:0,reserviert:0};let ng=0;
+  tv.forEach(r=>{s[r.kind]+=r.price;if(r.quelle==='geschaetzt')ng++;});
+  const med=filtered.some(r=>r.src!=='thevea'&&tvRowPasst(r,theraNames));
+  return `<div class="hk-sub">${aM} · thevea-Kalender${med?' + Medifox bis 26.07.':''}${D.thevea.bis?' · bis '+D.thevea.bis.toLocaleDateString('de-DE'):''}</div>`
+    +`<div class="hk-sub" style="margin-top:3px">${fmK(s.erbracht)} stattgefunden · ${fmK(s.offen)} ohne Status · ${fmK(s.ausfall)} Ausfall · ${fmK(s.reserviert)} reserviert</div>`
+    +(ng?`<div class="hk-sub" style="color:var(--amber)">${ng} Termine ohne Preis, mit ${fm(TV_STANDARD)} Standardsatz gerechnet</div>`:'');
+}
+function rTV(){
+  const el=document.getElementById('tvDiv');if(!el)return;
+  const hinweis=t=>'<div class="cd"><p style="font-size:12.5px;color:var(--muted);margin:0">'+t+'</p></div>';
+  if(!D.thevea||!D.thevea.ok){el.innerHTML=hinweis('Keine thevea-Historie geladen'+(D.thevea&&D.thevea.fehlt.length?' (fehlt: '+D.thevea.fehlt.join(', ')+')':'')+'.');return;}
+  if(aS==='PF im Park'){el.innerHTML=hinweis('PF im Park läuft weiter über Medifox. Der thevea-Kalender gilt für Werneck Physio und Ergo.');return;}
+  const months=getActiveMonths();const monthNums=months.map(m=>MN.indexOf(m)+1);
+  const theraNames=new Set(D.ctrl.filter(t=>matchS(t.s)).map(t=>t.n));
+  const rows=D.thevea.rows.filter(r=>monthNums.includes(r.month)&&tvRowPasst(r,theraNames));
+  if(!rows.length){el.innerHTML=hinweis('Keine thevea-Termine im gewählten Zeitraum.');return;}
+  const agg=()=>({n:0,erbracht:0,offen:0,ausfall:0,reserviert:0,gesamt:0,ng:0,nAusfall:0,nReserviert:0});
+  const add=(a,r)=>{a.n++;a[r.kind]+=r.price;a.gesamt+=r.price;if(r.quelle==='geschaetzt')a.ng++;if(r.kind==='ausfall')a.nAusfall++;if(r.kind==='reserviert')a.nReserviert++;};
+  const byM={},byT={},byH={},tot=agg();
+  rows.forEach(r=>{
+    add(byM[r.month]||(byM[r.month]=agg()),r);add(tot,r);
+    add(byT[r.name]||(byT[r.name]=Object.assign(agg(),{standort:r.standort})),r);
+    const h=byH[r.hm]||(byH[r.hm]={n:0,sum:0});h.n++;h.sum+=r.price;
+  });
+  const jahr=new Date().getFullYear();
+  const statistik=mi=>{const ym=jahr+'-'+String(mi).padStart(2,'0');let b=0,has=false;
+    TV_LOCS.forEach(l=>{if(!matchS(l.standort))return;const s=D.thevea.statistik[l.standort+'|'+ym];if(s){b+=s.brutto;has=true;}});return has?b:null;};
+  let h='<div class="tc"><div class="thd"><h3>Nach Monat</h3><div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +'<span class="hdr-badge">Jeder Kalender-Slot einzeln</span><span class="hdr-badge">ohne Status = Planwert</span><span class="hdr-badge">Ausfall = Heilmittelwert</span>'
+    +(D.thevea.bis?'<span class="hdr-badge">Stattgefunden bis '+D.thevea.bis.toLocaleDateString('de-DE')+'</span>':'')+'</div></div>';
+  h+='<table><thead><tr><th>Monat</th><th class="r">Termine</th><th class="r">Stattgefunden</th><th class="r">Ohne Status</th><th class="r">Ausfall</th><th class="r">Reserviert</th><th class="r">Gesamt</th><th class="r">thevea-Abrechnung</th><th class="r">Standardsatz</th></tr></thead><tbody>';
+  const zeile=(label,a,st,bold)=>`<tr${bold?' style="font-weight:700"':''}><td>${label}</td><td class="r">${a.n}</td><td class="r">${fm(a.erbracht)}</td><td class="r">${fm(a.offen)}</td><td class="r">${fm(a.ausfall)}<span style="color:var(--faint)"> (${a.nAusfall})</span></td><td class="r">${fm(a.reserviert)}<span style="color:var(--faint)"> (${a.nReserviert})</span></td><td class="r"><b>${fm(a.gesamt)}</b></td><td class="r">${st!=null?fm(st):'—'}</td><td class="r"${a.ng?' style="color:var(--amber)"':''}>${a.ng}</td></tr>`;
+  let stSum=0,stHas=false;
+  monthNums.forEach(mi=>{const a=byM[mi];if(!a)return;const st=statistik(mi);if(st!=null){stSum+=st;stHas=true;}h+=zeile(MN[mi-1],a,st,false);});
+  h+=zeile('Summe',tot,stHas?stSum:null,true)+'</tbody></table>';
+  h+='<p style="font-size:11.5px;color:var(--faint);margin:10px 0 0">„thevea-Abrechnung" ist die Umsatzstatistik brutto aus thevea selbst (Controlling/thevea, Monatsdatei) — sie zählt nur Einheiten, die thevea schon als abgerechnet führt, und liegt deshalb unter dem Kalenderwert; der Kalender zählt jeden Slot, so wie thevea ihn später auch abrechnet. Die Spalte „Standardsatz" nennt Termine, deren Preis weder thevea noch die GKV-Liste kannte.</p></div>';
+  // Therapeuten
+  const tl=Object.keys(byT).map(n=>Object.assign({name:n},byT[n])).sort((a,b)=>b.gesamt-a.gesamt);
+  h+='<div class="tc"><div class="thd"><h3>Nach Therapeut:in</h3><span class="hdr-badge">'+months.join(', ')+'</span></div>';
+  h+='<table><thead><tr><th>Therapeut:in</th><th>Standort</th><th class="r">Termine</th><th class="r">Stattgefunden</th><th class="r">Ohne Status</th><th class="r">Ausfall</th><th class="r">Reserviert</th><th class="r">Gesamt</th></tr></thead><tbody>';
+  tl.forEach(t=>{h+=`<tr><td>${t.name}</td><td style="color:var(--muted)">${t.standort}</td><td class="r">${t.n}</td><td class="r">${fm(t.erbracht)}</td><td class="r">${fm(t.offen)}</td><td class="r">${fm(t.ausfall)}</td><td class="r">${fm(t.reserviert)}</td><td class="r"><b>${fm(t.gesamt)}</b></td></tr>`;});
+  h+='</tbody></table></div>';
+  // Heilmittel
+  const hl=Object.keys(byH).map(k=>({hm:k,n:byH[k].n,sum:byH[k].sum})).sort((a,b)=>b.sum-a.sum);
+  h+='<div class="tc"><div class="thd"><h3>Nach Heilmittel</h3><span class="hdr-badge">'+hl.length+' Positionen</span></div>';
+  h+='<table><thead><tr><th>Heilmittel</th><th class="r">Termine</th><th class="r">ø je Termin</th><th class="r">Gesamt</th></tr></thead><tbody>';
+  hl.slice(0,25).forEach(x=>{h+=`<tr><td style="white-space:normal;max-width:520px">${x.hm}</td><td class="r">${x.n}</td><td class="r">${fm(x.sum/x.n)}</td><td class="r"><b>${fm(x.sum)}</b></td></tr>`;});
+  if(hl.length>25)h+=`<tr><td colspan="4" style="color:var(--faint)">… ${hl.length-25} weitere Positionen</td></tr>`;
+  h+='</tbody></table></div>';
+  h+='<div class="cd"><div class="ct">So wird gerechnet</div><p style="font-size:12.5px;color:var(--muted);line-height:1.6;margin:0">'
+    +'<b>Preis je Termin:</b> zuerst der Wert, den thevea selbst für diese Verordnung ausweist (Verordnungswert-Prognose, inklusive Privat-, Beihilfe- und BG-Sätzen und Hausbesuchspauschale); sonst das Heilmittel nach der GKV-Preisliste 2026 plus Hausbesuchspauschale je Besuch; zuletzt der Standardsatz Krankengymnastik. '
+    +'<b>Reservierungen</b> sind Patiententermine ohne Verordnung: 20 Min = KG 29,63 €, 30 Min = MLD-30 35,97 €, 45 Min = MLD-45 53,94 €, andere Längen als Vielfache von 20 Min KG (40 Min = zwei KG). '
+    +'<b>Blocker</b> und andere interne Einträge zählen nicht. <b>Ab 27.07.2026</b> (Ergo 01.08.) ersetzt der thevea-Kalender die Medifox-Exporte für KIMOJO; PF im Park bleibt Medifox.</p></div>';
+  el.innerHTML=h;
+}
+// ═══ /THEVEA UMSATZ ══════════════════════════════════════════════════════════
+
 // ═══ LOAD ALL DATA ═══
 async function loadAll(){
   const ld=document.getElementById('ld'),lt=document.getElementById('lt');
@@ -628,6 +904,9 @@ async function loadAll(){
       // Fallback: KPI Excel
       try{const raw=await getSheet(FILES.kpi,'Rohdaten Umsatz');if(raw){D.raw=parseRaw(raw);D.raw.forEach(r=>r.filiale='KIMOJO');}}catch(e){}
     }
+
+    lt.textContent='Lade thevea-Kalender...';
+    try{await tvLaden();}catch(e){console.warn('thevea:',e);}
 
     lt.textContent='Verarbeite Planungen...';
     // Plan KIMOJO
@@ -2529,7 +2808,7 @@ function rAusl(){
 
 // ═══ RENDER ═══
 let selectedTermineKW=0;
-function RA(){rF();rH();rFC();rAusl();rTermine();rPVI();rT();rKS();rB();rCF();rLiq();rPraxis();}
+function RA(){rF();rH();rTV();rFC();rAusl();rTermine();rPVI();rT();rKS();rB();rCF();rLiq();rPraxis();}
 
 function changeTermineKW(d){
   if(!D.termine)return;
@@ -2650,9 +2929,9 @@ function rH(){
   let umsatzErbracht=0;
   const therapists=D.ctrl.filter(t=>matchS(t.s));
   const theraNames=new Set(therapists.map(t=>t.n));
-  filtered.forEach(r=>{if(aS!=='Alle'&&!theraNames.has(r.name))return;umsatzErbracht+=r.price;});
+  filtered.forEach(r=>{if(!tvRowPasst(r,theraNames))return;umsatzErbracht+=r.price;});
 
-  const agg={};filtered.forEach(r=>{if(aS!=='Alle'&&!theraNames.has(r.name))return;if(!agg[r.name])agg[r.name]=0;agg[r.name]+=r.price;});
+  const agg={};filtered.forEach(r=>{if(!tvRowPasst(r,theraNames))return;if(!agg[r.name])agg[r.name]=0;agg[r.name]+=r.price;});
   const ephs=therapists.map(t=>{const rev=agg[t.n]||0;const h=getWhM(t,months);return h>0?rev/h:0;}).filter(v=>v>0);
   const avgU=ephs.length?(ephs.reduce((a,b)=>a+b,0)/ephs.length).toFixed(1):'0';
   const uc=parseFloat(avgU)<56?'var(--red)':parseFloat(avgU)<65?'var(--amber)':'var(--green)';
@@ -2675,7 +2954,7 @@ function rH(){
     const geschMc=parseFloat(geschMarge)<10?'var(--red)':parseFloat(geschMarge)<20?'var(--amber)':'var(--green)';
 
   document.getElementById('hero').innerHTML=
-    `<div class="hk"><div class="hk-l">Umsatz Erbracht</div><div class="hk-v">${fm(umsatzErbracht)}</div><div class="hk-sub">${aM} · aus Praxissoftware</div>${planBadge(umsatzErbracht,planEin,'Plan')}</div>`+
+    `<div class="hk"><div class="hk-l">Umsatz Erbracht</div><div class="hk-v">${fm(umsatzErbracht)}</div>${tvHeroSub(filtered,theraNames)}${planBadge(umsatzErbracht,planEin,'Plan')}</div>`+
     `<div class="hk"><div class="hk-l">Umsatz BWA</div><div class="hk-v">${fm(umsatzBWA)}</div><div class="hk-sub">${aM} · vom Steuerberater</div></div>`+
     `<div class="hk"><div class="hk-l">Gesamtkosten</div><div class="hk-v" style="color:${kc}">${fm(kosten)}</div><div class="hk-sub">${aM} · BWA</div>${planBadge(kosten,planKosten,'Plan-Kosten',true)}</div>`+
     `<div class="hk"><div class="hk-l">Ergebnis (BWA)</div><div class="hk-v" style="color:${ec}">${fm(ergebnis)}</div><div class="hk-sub">vor Steuern · Marge ${marge}%</div>${planBadge(ergebnis,planGewinn,'Plan-Gewinn')}</div>`+
@@ -2750,7 +3029,7 @@ function rFC(){
     const mi=i+1;const rawM=D.raw.filter(r=>r.month===mi);
     const therapists=D.ctrl.filter(t=>matchS(t.s));
     const theraNames=new Set(therapists.map(t=>t.n));
-    let erbracht=0;rawM.forEach(r=>{if(aS!=='Alle'&&!theraNames.has(r.name))return;erbracht+=r.price;});
+    let erbracht=0;rawM.forEach(r=>{if(!tvRowPasst(r,theraNames))return;erbracht+=r.price;});
     if(erbracht>0)hasIst=true;
     
     // PLAN values
@@ -2982,7 +3261,7 @@ function rPVI(){
     const therapists=D.ctrl.filter(t=>matchS(t.s));
     const theraNames=new Set(therapists.map(t=>t.n));
     let erbracht=0;
-    rawM.forEach(r=>{if(aS!=='Alle'&&!theraNames.has(r.name))return;erbracht+=r.price;});
+    rawM.forEach(r=>{if(!tvRowPasst(r,theraNames))return;erbracht+=r.price;});
 
     let planEin=0,planKosten=0,planGewinn=0;
     if(aS==='Alle'||aS==='KIMOJO Gesamt'||aS==='KIMOJO Physio'||aS==='KIMOJO Ergo'){
