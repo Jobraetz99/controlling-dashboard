@@ -439,7 +439,7 @@ Mit Microsoft anmelden</button>
 <div id="sec-thera"></div><div class="st" onclick="toggleSection(this)">👥 Therapeuten · Umsatz pro Stunde <span class="st-arrow">▼</span></div>
 <div id="theraKpis" style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:16px"></div>
 <div class="tc"><div class="thd"><h3 id="tht">Alle Therapeuten</h3><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="hdr-badge" id="kwInfo"></span><select class="ss" id="kwf" onchange="rT()"><option value="all">Alle KWs</option></select><select class="ss" id="so" onchange="rT()"><option value="ud">€/h ↓</option><option value="ua">€/h ↑</option><option value="u">Umsatz ↓</option><option value="b">Behandlungen ↓</option></select></div></div>
-<table><thead><tr><th>Therapeut</th><th>Standort</th><th class="r">Wo-Std</th><th class="r">Umsatz</th><th class="r">Plan</th><th class="r">Beh.</th><th class="r">€ / Stunde</th><th style="min-width:100px"></th></tr></thead><tbody id="tb"></tbody></table>
+<table><thead><tr><th>Therapeut</th><th>Standort</th><th class="r">Soll h</th><th class="r">Anwesend h</th><th class="r">Umsatz</th><th class="r">Plan</th><th class="r">Beh.</th><th class="r">€ / Vertragsstd.</th><th class="r">€ / anw. Std.</th><th style="min-width:100px"></th></tr></thead><tbody id="tb"></tbody></table>
 <div class="tl"><span><span class="tw" style="background:var(--primary)"></span>&lt;56 €/h</span><span><span class="tw" style="background:var(--amber)"></span>56–65</span><span><span class="tw" style="background:var(--green)"></span>&gt;65</span></div></div>
 
 <div id="sec-kranken"></div><div class="st" onclick="toggleSection(this)">🏥 Krankenstand <span class="st-arrow">▼</span></div>
@@ -746,7 +746,7 @@ async function tvLaden(){
   for(let i=TV_PROG_MONATE-1;i>=0;i--){const d=new Date(j.getFullYear(),j.getMonth()-i,1);monate.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'));}
   const L=f=>loadJSONPfad(f).catch(()=>null);
   D.thevea={rows:[],stat:{},statistik:{},fehlt:[],ok:false,bis:null,medifoxEntfernt:0,personen:{}};
-  const az={};const f4P=L(TV_AZ_F4_VOLL).then(v=>Array.isArray(v)&&v.length?v:L(TV_AZ_F4));
+  const az={},abwes={};const f4P=L(TV_AZ_F4_VOLL).then(v=>Array.isArray(v)&&v.length?v:L(TV_AZ_F4));
   const [uebAlt,uebWp]=await Promise.all([L(TV_DIR+'Verordnungsuebersicht.json'),L(TV_DIR+'vo_uebersicht_wp.json')]);
   for(const loc of TV_LOCS){
     const [hist,uebLoc,det,...progs]=await Promise.all([
@@ -756,6 +756,7 @@ async function tvLaden(){
       ...monate.map(m=>L(TV_PROG_DIR+loc.prog+m+'.json'))
     ]);
     az[loc.suf]=await L(TV_DIR+'arbeitszeiten_roh_'+loc.suf+'.json');
+    abwes[loc.suf]=(await L(TV_DIR+'abwesenheiten_historie_'+loc.suf+'.json'))||(await L(TV_DIR+'abwesenheiten_roh_'+loc.suf+'.json'))||[];
     if(!hist){D.thevea.fehlt.push('termine_historie_'+loc.suf+'.json');continue;}
     const r=tvBerechne(loc,hist,tvVoMap(uebLoc),tvDetMap(det),tvProgMap(progs),D.ctrl,jahr);
     D.thevea.rows=D.thevea.rows.concat(r.rows);D.thevea.stat[loc.standort]=r.stat;Object.assign(D.thevea.personen,r.personen);
@@ -771,7 +772,7 @@ async function tvLaden(){
   // Kitzingen-Block zeigt sie nur noch als Hinweis.
   const extra=r=>r.src!=='thevea'&&String(r.filiale||'')==='PHFIP'&&tvIstKurs(r);
   D.thevea.kitzExtra=D.raw.filter(extra);D.raw=D.raw.filter(r=>!extra(r));
-  if(!D.thevea.rows.length){try{tvStammdaten(jahr,az,f4);}catch(e){console.warn('Stammdaten:',e);}return;}
+  if(!D.thevea.rows.length){try{tvStammdaten(jahr,az,f4,abwes);}catch(e){console.warn('Stammdaten:',e);}return;}
   const cut=new Date(TV_LOCS[0].cutover+'T00:00:00');
   const vorher=D.raw.length;
   D.raw=D.raw.filter(r=>{
@@ -783,7 +784,7 @@ async function tvLaden(){
   D.raw=D.raw.concat(D.thevea.rows);
   D.thevea.bis=D.thevea.rows.filter(r=>r.kind==='erbracht').reduce((m,r)=>r.datum>m?r.datum:m,null);
   D.thevea.ok=true;
-  try{tvStammdaten(jahr,az,f4);}catch(e){console.warn('Stammdaten:',e);}
+  try{tvStammdaten(jahr,az,f4,abwes);}catch(e){console.warn('Stammdaten:',e);}
   console.log('thevea:',D.thevea.rows.length,'Termine bewertet,',D.thevea.medifoxEntfernt,'Medifox-Zeilen ab Cutover ersetzt');
 }
 // ── Stammdaten aus den Exporten ──────────────────────────────────────────────
@@ -795,6 +796,30 @@ async function tvLaden(){
 // umgeschrieben; der alte Name bleibt als `plan` für die Plan-Suche erhalten.
 const TV_AZ_F4='/12_Code/Controlling/auslastung_historie_f4.json';
 const TV_AZ_F4_VOLL='/12_Code/Controlling/auslastung_historie_f4_voll.json';
+// ── Soll- und Anwesenheitsstunden ──────────────────────────────────────────
+// Vertragsstunde = geplante Arbeitszeit laut Wochentagsmuster an den
+// Kalendertagen des Monats, Feiertage (Bayern) abgezogen. Anwesende Stunde =
+// Vertragsstunde minus Urlaub, Krankheit, Fortbildung und Sonstiges.
+function tvYmd(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function tvOstern(j){const a=j%19,b=Math.floor(j/100),c=j%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),ta=((h+l-7*m+114)%31)+1;return new Date(j,mo-1,ta);}
+function tvFeiertage(j){
+  const f=new Set();
+  [j,j+1].forEach(y=>{['01-01','01-06','05-01','08-15','10-03','11-01','12-25','12-26'].forEach(x=>f.add(y+'-'+x));
+    const o=tvOstern(y);[-2,1,39,50,60].forEach(n=>{const d=new Date(o);d.setDate(o.getDate()+n);f.add(tvYmd(d));});});
+  return f;
+}
+const TV_WD=['SONNTAG','MONTAG','DIENSTAG','MITTWOCH','DONNERSTAG','FREITAG','SAMSTAG'];
+function tvR1(x){return Math.round(x*10)/10;}
+// Stunden eines Monats: aus thevea/Medifox (t.std), sonst Tracker-Wochenstunden × 4,33.
+function tvStdMonat(t,m){
+  if(t.std&&t.std[m])return t.std[m];
+  const wh=(t.mh&&t.mh[m])||t.wh||0;return{soll:tvR1(wh*4.33),anw:tvR1(wh*4.33),q:'tracker'};
+}
+function tvStdSumme(t,months){
+  let soll=0,anw=0,tracker=false;
+  months.forEach(m=>{const s=tvStdMonat(t,m);soll+=s.soll;anw+=s.anw;if(s.q==='tracker')tracker=true;});
+  return{soll:tvR1(soll),anw:tvR1(anw),tracker};
+}
 function tvSpanMin(a,b){const x=String(a||'').split(':'),y=String(b||'').split(':');return(+y[0]*60+(+y[1]||0))-(+x[0]*60+(+x[1]||0));}
 function tvWochenStd(rec){return(rec&&rec.zeitspannen||[]).reduce((s,z)=>s+Math.max(0,tvSpanMin(z.from,z.until)),0)/60;}
 function tvGiltIm(rec,jahr,mi){
@@ -802,7 +827,8 @@ function tvGiltIm(rec,jahr,mi){
   const vf=rec.validFrom?new Date(rec.validFrom+'T00:00:00'):null,vu=rec.validUntil?new Date(rec.validUntil+'T23:59:59'):null;
   return(!vf||vf<=e)&&(!vu||vu>=a);
 }
-function tvStammdaten(jahr,az,f4){
+function tvStammdaten(jahr,az,f4,abwes){
+  abwes=abwes||{};const feier=tvFeiertage(jahr);
   const ctrl=D.ctrl||[];
   // Der Tracker schreibt manche Namen als „Vorname Nachname“ statt
   // „Nachname, Vorname“; beide Formen gelten als dieselbe Person.
@@ -820,6 +846,8 @@ function tvStammdaten(jahr,az,f4){
   });
   ctrl.forEach(t=>{if(alias[t.n]){t.plan=t.plan||t.n;t.n=alias[t.n];}});
   (D.raw||[]).forEach(r=>{if(r.src!=='thevea'&&alias[r.name])r.name=alias[r.name];});
+  // Erster Termin je Person (für Neuzugänge, siehe unten).
+  const erster={};(D.thevea.rows||[]).forEach(r=>{const d=r.datum?tvYmd(r.datum):null;if(d&&(!erster[r.name]||d<erster[r.name]))erster[r.name]=d;});
   // 2. Arbeitszeiten aus thevea (Werneck)
   Object.values(D.thevea.personen||{}).forEach(p=>{
     const recs=(az[p.suf]||[]).filter(r=>r&&r.personId===p.id);if(!recs.length)return;
@@ -827,10 +855,27 @@ function tvStammdaten(jahr,az,f4){
     // Kitzinger Personal steht in thevea nur mit einem Platzhalter-Eintrag.
     if(t&&t.s&&!/^KIMOJO/.test(t.s))return;
     if(!t){t={n:p.name,s:p.standort,b:p.standort==='KIMOJO Ergo'?'Ergo':'Physio',wh:0,mh:{},quelle:'thevea'};ctrl.push(t);}
-    t.mh=t.mh||{};
+    t.mh=t.mh||{};t.std=t.std||{};
+    const abw=(abwes[p.suf]||[]).filter(a=>a&&a.personId===p.id);
+    const ersterStart=recs.map(x=>String(x.validFrom||'')).filter(Boolean).sort()[0]||'';
     for(let mi=1;mi<=12;mi++){
-      const r=recs.filter(x=>tvGiltIm(x,jahr,mi)).sort((a,b)=>String(b.validFrom||'').localeCompare(String(a.validFrom||'')))[0];
-      if(r)t.mh[MN[mi-1]]=r1(tvWochenStd(r));
+      const recsM=recs.filter(x=>tvGiltIm(x,jahr,mi)).sort((a,b)=>String(b.validFrom||'').localeCompare(String(a.validFrom||'')));
+      if(!recsM.length)continue;
+      t.mh[MN[mi-1]]=r1(tvWochenStd(recsM[0]));
+      const tage=new Date(jahr,mi,0).getDate();let soll=0,anw=0;
+      for(let d=1;d<=tage;d++){
+        const dt=new Date(jahr,mi-1,d),ymd=tvYmd(dt);if(feier.has(ymd))continue;
+        // Tage vor dem ersten Arbeitszeit-Datensatz zählen nur, wenn die Person
+        // damals schon Termine hatte (Datensatz wurde später neu angelegt);
+        // sonst ist es ein Neuzugang und die Tage davor sind keine Vertragszeit.
+        let rec=recs.filter(x=>(!x.validFrom||String(x.validFrom)<=ymd)&&(!x.validUntil||String(x.validUntil)>=ymd)).sort((a,b)=>String(b.validFrom||'').localeCompare(String(a.validFrom||'')))[0];
+        if(!rec){if(ymd<ersterStart&&!(erster[p.name]&&erster[p.name]<=ymd))continue;rec=recsM[0];}
+        const wd=TV_WD[dt.getDay()];
+        const min=(rec.zeitspannen||[]).filter(z=>z.wochentag===wd).reduce((s,z)=>s+Math.max(0,tvSpanMin(z.from,z.until)),0);
+        if(!min)continue;soll+=min;
+        if(!abw.some(a=>String(a.from)<=ymd&&String(a.until)>=ymd))anw+=min;
+      }
+      t.std[MN[mi-1]]={soll:r1(soll/60),anw:r1(anw/60),q:'thevea'};
     }
     const cur=recs.find(r=>r.isCurrentlyValid)||recs[0];t.wh=r1(tvWochenStd(cur));t.azQuelle='thevea';
   });
@@ -839,11 +884,11 @@ function tvStammdaten(jahr,az,f4){
   //    häufigste geplante Arbeitszeit (Abwesenheitstage tragen das Soll
   //    weiterhin), die Summe über Mo–So ist die Vertragswoche – dieselbe
   //    Logik wie bei thevea, Urlaub drückt die Stunden nicht.
-  const muster={},tage={};
+  const muster={},tage={},hist={},histTage=new Set();
   (Array.isArray(f4)?f4:[]).forEach(day=>{
     const d=String(day&&day.onDay||'');if(!d.startsWith(jahr+'-'))return;const mi=+d.slice(5,7);
     const wd=new Date(d+'T12:00:00').getDay();
-    (tage[mi]=tage[mi]||new Set()).add(d);
+    (tage[mi]=tage[mi]||new Set()).add(d);histTage.add(d);
     const gesehen=new Set();
     (day.spalten||[]).forEach(s=>{
       if(!s)return;
@@ -851,6 +896,7 @@ function tvStammdaten(jahr,az,f4){
       const min=(s.Arbeitszeiten||[]).reduce((a,z)=>a+Math.max(0,tvSpanMin(z.Start,z.Ende)),0);
       const m=(muster[n]=muster[n]||{});const mm=(m[mi]=m[mi]||{});const w=(mm[wd]=mm[wd]||[]);
       w.push(min);gesehen.add(n);
+      (hist[n]=hist[n]||{})[d]={min,abw:!!s.IstAbwesend};
     });
     // Wer an diesem Tag keine Spalte hat, arbeitet an diesem Wochentag nicht.
     Object.keys(muster).forEach(n=>{if(gesehen.has(n))return;const mm=(muster[n][mi]=muster[n][mi]||{});(mm[wd]=mm[wd]||[]).push(0);});
@@ -876,6 +922,21 @@ function tvStammdaten(jahr,az,f4){
     });
     if(letzte)t.wh=letzte;
     t.azQuelle=t.azQuelle?t.azQuelle+'+medifox':'medifox';
+    // Monatsstunden: Tage aus der Historie zählen mit ihrem Plan und ihrer
+    // Abwesenheit, fehlende Tage (Rest des laufenden Monats) mit dem
+    // Wochentagsmuster als anwesend.
+    t.std=t.std||{};
+    const musterMon=mi=>{const ks2=Object.keys(muster[n]).map(Number).filter(voll).filter(x=>x<=mi).sort((a,b)=>b-a);return ks2.length?muster[n][ks2[0]]:null;};
+    Object.keys(muster[n]).map(Number).forEach(mi=>{
+      const mm=musterMon(mi)||muster[n][mi];const tageM=new Date(jahr,mi,0).getDate();let soll=0,anw=0,ist=0;
+      for(let d=1;d<=tageM;d++){
+        const dt=new Date(jahr,mi-1,d),ymd=tvYmd(dt);
+        if(histTage.has(ymd)){const h=(hist[n]||{})[ymd];if(!h||!h.min)continue;soll+=h.min;ist++;if(!h.abw)anw+=h.min;continue;}
+        if(feier.has(ymd))continue;
+        const w=mm&&mm[dt.getDay()];if(!w||!w.length)continue;const min=modus(w);soll+=min;anw+=min;
+      }
+      if(soll>0)t.std[MN[mi-1]]={soll:r1(soll/60),anw:r1(anw/60),q:'medifox'};
+    });
   });
   D.ctrl=ctrl;
   D.thevea.stammdaten={aliase:Object.keys(alias).length,thevea:ctrl.filter(t=>/thevea/.test(t.azQuelle||'')).length,medifox:ctrl.filter(t=>/medifox/.test(t.azQuelle||'')).length,neu:ctrl.filter(t=>t.quelle).length};
@@ -3105,9 +3166,9 @@ function rH(){
   filtered.forEach(r=>{if(!tvRowPasst(r,theraNames))return;umsatzErbracht+=r.price;});
 
   const agg={};filtered.forEach(r=>{if(!tvRowPasst(r,theraNames))return;if(!agg[r.name])agg[r.name]=0;agg[r.name]+=r.price;});
-  const ephs=therapists.map(t=>{const rev=agg[t.n]||0;const h=getWhM(t,months);return h>0?rev/h:0;}).filter(v=>v>0);
-  const avgU=ephs.length?(ephs.reduce((a,b)=>a+b,0)/ephs.length).toFixed(1):'0';
-  const uc=parseFloat(avgU)<56?'var(--red)':parseFloat(avgU)<65?'var(--amber)':'var(--green)';
+  const stdH=therapists.reduce((o,t)=>{const rev=agg[t.n]||0;if(rev<=0)return o;const s=tvStdSumme(t,months);o.rev+=rev;o.soll+=s.soll;o.anw+=s.anw;return o;},{rev:0,soll:0,anw:0});
+  const ephV=stdH.soll>0?stdH.rev/stdH.soll:0,ephA=stdH.anw>0?stdH.rev/stdH.anw:0;
+  const ampel=v=>v<56?'var(--red)':v<65?'var(--amber)':'var(--green)';
 
   const geschGewinn=umsatzErbracht-kosten;
   const ggc=geschGewinn>=0?'var(--green)':'var(--red)';
@@ -3131,7 +3192,8 @@ function rH(){
     `<div class="hk"><div class="hk-l">Umsatz BWA</div><div class="hk-v">${fm(umsatzBWA)}</div><div class="hk-sub">${aM} · vom Steuerberater</div></div>`+
     `<div class="hk"><div class="hk-l">Gesamtkosten</div><div class="hk-v" style="color:${kc}">${fm(kosten)}</div><div class="hk-sub">${aM} · BWA</div>${planBadge(kosten,planKosten,'Plan-Kosten',true)}</div>`+
     `<div class="hk"><div class="hk-l">Ergebnis (BWA)</div><div class="hk-v" style="color:${ec}">${fm(ergebnis)}</div><div class="hk-sub">vor Steuern · Marge ${marge}%</div>${planBadge(ergebnis,planGewinn,'Plan-Gewinn')}</div>`+
-    `<div class="hk"><div class="hk-l">ø €/Stunde</div><div class="hk-v" style="color:${uc}">${avgU.replace('.',',')} €</div><div class="hk-sub">&lt;56 · 56–65 · &gt;65</div></div>`+
+    `<div class="hk"><div class="hk-l">€ je Vertragsstunde</div><div class="hk-v" style="color:${ampel(ephV)}">${ephV.toFixed(1).replace('.',',')} €</div><div class="hk-sub">Umsatz ÷ Soll-Stunden · &lt;56 · 56–65 · &gt;65</div></div>`+
+    `<div class="hk"><div class="hk-l">€ je anwesender Stunde</div><div class="hk-v" style="color:${ampel(ephA)}">${ephA.toFixed(1).replace('.',',')} €</div><div class="hk-sub">ohne Urlaub, Krankheit, Fortbildung</div></div>`+
     `<div class="hk" style="border:2px dashed var(--border);background:#fffdf8"><div class="hk-l">Geschätzter Gewinn (erbracht) *</div><div class="hk-v" style="color:${ggc}">${fm(geschGewinn)}</div><div class="hk-sub" style="font-style:italic">* Marge <span style="color:${geschMc};font-weight:700">${geschMarge}%</span> · Erbrachte Leistungen − BWA-Kosten</div>${planBadge(geschGewinn,planGewinn,'Plan-Gewinn')}</div>`;
 
   // Erwarteter Jahresgewinn: Ist-Gewinn bisheriger Monate + Plan-Gewinn restliche Monate
@@ -3555,10 +3617,10 @@ function rT(){
   const agg={};filtered.forEach(r=>{if(!agg[r.name])agg[r.name]={rev:0,cnt:0};agg[r.name].rev+=r.price;agg[r.name].cnt++;});
   let list=D.ctrl.filter(t=>matchS(t.s)).map(t=>{
     const a=agg[t.n]||{rev:0,cnt:0};
-    const h=numWeeks?getWhW(t,months):getWhM(t,months);
-    const ep=h>0?a.rev/h:0;
+    const st=numWeeks?{soll:getWhW(t,months),anw:getWhW(t,months),tracker:!t.azQuelle}:tvStdSumme(t,months);
+    const ep=st.soll>0?a.rev/st.soll:0,epA=st.anw>0?a.rev/st.anw:0;
     const planRev=getPlanTherapist(t.plan||t.n,months);
-    return{...t,u:a.rev,b:a.cnt,p:ep,planRev};});
+    return{...t,u:a.rev,b:a.cnt,p:ep,pa:epA,soll:st.soll,anw:st.anw,tracker:st.tracker,planRev};});
   list=list.filter(t=>t.u>0||t.b>0);
   const sb=document.getElementById('so').value;
   if(sb==='ud')list.sort((a,b)=>b.p-a.p);else if(sb==='ua')list.sort((a,b)=>a.p-b.p);
@@ -3566,7 +3628,8 @@ function rT(){
   const mx=Math.max(...list.map(t=>t.u),1);
 
   const active=list.filter(t=>t.p>0);
-  const avgEph=active.length?(active.reduce((s,t)=>s+t.p,0)/active.length):0;
+  const wRev=active.reduce((s,t)=>s+t.u,0),wSoll=active.reduce((s,t)=>s+t.soll,0),wAnw=active.reduce((s,t)=>s+t.anw,0);
+  const avgEph=wSoll>0?wRev/wSoll:0,avgEphA=wAnw>0?wRev/wAnw:0;const ephClsA=avgEphA>=65?'var(--green)':avgEphA>=56?'var(--amber)':'var(--red)';
   const greenC=list.filter(t=>t.p>=65).length;
   const yellowC=list.filter(t=>t.p>=56&&t.p<65).length;
   const redC=list.filter(t=>t.p>0&&t.p<56).length;
@@ -3576,7 +3639,8 @@ function rT(){
   const underPlan=list.filter(t=>t.planRev>0&&t.u<t.planRev).length;
   const noPlan=list.filter(t=>t.planRev<=0&&t.p>0).length;
   document.getElementById('theraKpis').innerHTML=
-    `<div class="hk" style="padding:16px"><div class="hk-l">ø €/Stunde</div><div class="hk-v" style="font-size:22px;color:${ephCls}">${avgEph.toFixed(2).replace('.',',')} €</div></div>`+
+    `<div class="hk" style="padding:16px"><div class="hk-l">€ je Vertragsstunde</div><div class="hk-v" style="font-size:22px;color:${ephCls}">${avgEph.toFixed(2).replace('.',',')} €</div><div class="hk-sub">Umsatz ÷ Soll-Stunden</div></div>`+
+    `<div class="hk" style="padding:16px"><div class="hk-l">€ je anwesender Stunde</div><div class="hk-v" style="font-size:22px;color:${ephClsA}">${avgEphA.toFixed(2).replace('.',',')} €</div><div class="hk-sub">ohne Urlaub, Krankheit, Fortbildung</div></div>`+
     `<div class="hk" style="padding:16px;border-top:3px solid var(--green)"><div class="hk-l">● Gut (>65)</div><div class="hk-v" style="font-size:22px;color:var(--green)">${greenC}</div><div class="hk-sub">Therapeut:innen</div></div>`+
     `<div class="hk" style="padding:16px;border-top:3px solid var(--amber)"><div class="hk-l">● Mittel (56-65)</div><div class="hk-v" style="font-size:22px;color:var(--amber)">${yellowC}</div><div class="hk-sub">Therapeut:innen</div></div>`+
     `<div class="hk" style="padding:16px;border-top:3px solid var(--red)"><div class="hk-l">● Handlungsbedarf (<56)</div><div class="hk-v" style="font-size:22px;color:var(--red)">${redC}</div><div class="hk-sub">Therapeut:innen</div></div>`+
@@ -3600,7 +3664,7 @@ function rT(){
       const sign=delta>=0?'+':'';
       planCell=`<span style="font-size:11px;color:var(--blue);font-weight:600">${fmK(t.planRev)}</span> <span class="plan-delta ${dc}" style="font-size:9px;padding:1px 5px">${sign}${pct}%</span>`;
     }
-    return`<tr class="t-row-click" onclick="toggleChart('${rid}','${t.n.replace(/'/g,"\\'")}',${t.wh})"><td class="bo">${t.n}</td><td><span class="stt" style="background:${c}14;color:${c}"><span class="dot" style="background:${c}"></span>${sn(t.s)}</span></td><td class="r" style="color:#999">${(Math.round(getWhW(t,months)*10)/10).toLocaleString('de-DE')}${t.azQuelle?'':' <span title="aus dem Weekly Tracker">*</span>'}</td><td class="r bo">${Math.round(t.u).toLocaleString('de-DE')} €</td><td class="r">${planCell}</td><td class="r" style="color:#999">${t.b}</td><td class="r"><span class="ub ${cl}">${t.p.toFixed(2).replace('.',',')}</span></td><td><div class="mb"><div class="tp" style="width:${bw}%;background:${bc}"></div></div></td></tr><tr class="t-detail" id="${rid}"><td colspan="8"><div class="t-chart" id="ch_${rid}"></div></td></tr>`;
+    return`<tr class="t-row-click" onclick="toggleChart('${rid}','${t.n.replace(/'/g,"\\'")}',${t.wh})"><td class="bo">${t.n}</td><td><span class="stt" style="background:${c}14;color:${c}"><span class="dot" style="background:${c}"></span>${sn(t.s)}</span></td><td class="r" style="color:#999">${t.soll.toLocaleString('de-DE')}${t.tracker?' <span title="Stunden aus dem Weekly Tracker, ohne Abwesenheiten">*</span>':''}</td><td class="r" style="color:#999">${t.anw.toLocaleString('de-DE')}</td><td class="r bo">${Math.round(t.u).toLocaleString('de-DE')} €</td><td class="r">${planCell}</td><td class="r" style="color:#999">${t.b}</td><td class="r"><span class="ub ${cl}">${t.p.toFixed(2).replace('.',',')}</span></td><td class="r"><span class="ub ${t.pa<56?'ur':t.pa<=65?'uy':'ug'}">${t.pa.toFixed(2).replace('.',',')}</span></td><td><div class="mb"><div class="tp" style="width:${bw}%;background:${bc}"></div></div></td></tr><tr class="t-detail" id="${rid}"><td colspan="10"><div class="t-chart" id="ch_${rid}"></div></td></tr>`;
   }).join('');
   const kwLabel=kwVal!=='all'?' · KW '+kwVal:'';
   document.getElementById('tht').textContent=(aS==='Alle'?'Alle Therapeuten':sn(aS))+' · '+aM+kwLabel;
