@@ -616,7 +616,7 @@ function tvReservPreis(min){
   if(min===45)return 53.94;
   return Math.ceil(min/20)*29.63;
 }
-function tvNorm(s){return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/\s+/g,' ').trim();}
+function tvNorm(s){return String(s||'').replace(/ß/g,'ss').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/\s+/g,' ').trim();}
 // thevea nennt „Angelina Schmitt", die Team-Tabelle „Schmitt, Angie". Gleicher
 // Nachname und gleicher Vornamen-Anfang reichen, wenn der Treffer eindeutig
 // ist; sonst bleibt der thevea-Name stehen und der Therapeut erscheint ohne
@@ -635,6 +635,14 @@ function tvCtrlName(vn,nn,ctrl){
     return cv.slice(0,3)===vnN.slice(0,3);
   });
   return hits.length===1?hits[0].n:key;
+}
+// Der Name, unter dem eine Person überall erscheint, ist der aus dem Export:
+// „Schmitt, Angelina", so wie thevea sie führt. Nur wo thevea den Nachnamen auf
+// die Initiale kürzt („B., Tabea", Ergo-Konto), hilft der Weekly Tracker mit dem
+// vollen Namen aus — wenn er eindeutig ist.
+function tvKanon(vn,nn,ctrl){
+  if(/^[a-z]\.$/.test(tvNorm(nn)))return tvCtrlName(vn,nn,ctrl);
+  return String(nn||'').trim()+', '+String(vn||'').trim();
 }
 function tvWoche(d){
   const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));
@@ -669,7 +677,7 @@ function tvStatAgg(){return{n:0,erbracht:0,offen:0,ausfall:0,reserviert:0,gesamt
 function tvBerechne(loc,hist,voUeb,voDet,prog,ctrl,jahr){
   const termine=hist&&hist.data&&hist.data.termine||(Array.isArray(hist)?hist:[]);
   const cut=new Date(loc.cutover+'T00:00:00');
-  const rows=[],stat={},hbSeen={};
+  const rows=[],stat={},hbSeen={},personen={};
   const voJe={};termine.forEach(t=>{if(t&&t.__typename==='PatientenTermin'&&t.terminVerordnung&&t.terminVerordnung.id!=null){const id=t.mitarbeiter&&t.mitarbeiter.person&&t.mitarbeiter.person.id;voJe[id]=(voJe[id]||0)+1;}});
   termine.forEach(t=>{
     if(!t||t.__typename!=='PatientenTermin')return;
@@ -711,13 +719,14 @@ function tvBerechne(loc,hist,voUeb,voDet,prog,ctrl,jahr){
     if(quelle==='thevea')s.nThevea++;else if(quelle==='gkv')s.nGkv++;else if(quelle==='geschaetzt')s.nGeschaetzt++;
     // Der Ergo-Export führt (noch) keinen Mitarbeiter am Termin; die Zeile
     // bleibt dann dem Standort zugeordnet, nur ohne Therapeut.
-    const name=(p.vorname||p.nachname)?tvCtrlName(p.vorname,p.nachname,ctrl):loc.standort+' · ohne Therapeut';
+    const name=(p.vorname||p.nachname)?tvKanon(p.vorname,p.nachname,ctrl):loc.standort+' · ohne Therapeut';
+    if(p.id!=null&&!personen[p.id])personen[p.id]={id:p.id,vn:p.vorname||'',nn:p.nachname||'',name,standort:loc.standort,suf:loc.suf};
     rows.push({name,maId:p.id,month,week:tvWoche(d),price,billed:true,
       wd:(d.getDay()+6)%7,startMin:d.getHours()*60+d.getMinutes(),durMin:durMin>0?durMin:20,
       dateKey:d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(),filiale:'KIMOJO',standort:loc.standort,
       src:'thevea',kind,quelle,hm:hm||'—',status:st,datum:d});
   });
-  return{rows,stat};
+  return{rows,stat,personen};
 }
 // Standortfilter für Umsatzzeilen: thevea-Zeilen kennen ihren Standort,
 // Medifox-Zeilen nur den Namen, der über die Team-Tabelle zugeordnet wird.
@@ -731,7 +740,8 @@ async function tvLaden(){
   const j=new Date(),monate=[];
   for(let i=TV_PROG_MONATE-1;i>=0;i--){const d=new Date(j.getFullYear(),j.getMonth()-i,1);monate.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'));}
   const L=f=>loadJSONPfad(f).catch(()=>null);
-  D.thevea={rows:[],stat:{},statistik:{},fehlt:[],ok:false,bis:null,medifoxEntfernt:0};
+  D.thevea={rows:[],stat:{},statistik:{},fehlt:[],ok:false,bis:null,medifoxEntfernt:0,personen:{}};
+  const az={};const f4P=L(TV_AZ_F4);
   const [uebAlt,uebWp]=await Promise.all([L(TV_DIR+'Verordnungsuebersicht.json'),L(TV_DIR+'vo_uebersicht_wp.json')]);
   for(const loc of TV_LOCS){
     const [hist,uebLoc,det,...progs]=await Promise.all([
@@ -740,9 +750,10 @@ async function tvLaden(){
       L(TV_DIR+'verordnung_details_'+loc.suf+'.json'),
       ...monate.map(m=>L(TV_PROG_DIR+loc.prog+m+'.json'))
     ]);
+    az[loc.suf]=await L(TV_DIR+'arbeitszeiten_roh_'+loc.suf+'.json');
     if(!hist){D.thevea.fehlt.push('termine_historie_'+loc.suf+'.json');continue;}
     const r=tvBerechne(loc,hist,tvVoMap(uebLoc),tvDetMap(det),tvProgMap(progs),D.ctrl,jahr);
-    D.thevea.rows=D.thevea.rows.concat(r.rows);D.thevea.stat[loc.standort]=r.stat;
+    D.thevea.rows=D.thevea.rows.concat(r.rows);D.thevea.stat[loc.standort]=r.stat;Object.assign(D.thevea.personen,r.personen);
     // thevea-eigene Umsatzstatistik des jeweiligen Monats als Gegenprobe.
     progs.forEach((f,i)=>{
       const n=f&&f.umsatzAktuellerMonat&&f.umsatzAktuellerMonat.data&&f.umsatzAktuellerMonat.data.umsatzstatistikMitarbeiterBehandlungen&&f.umsatzAktuellerMonat.data.umsatzstatistikMitarbeiterBehandlungen.nodes;
@@ -750,7 +761,8 @@ async function tvLaden(){
       D.thevea.statistik[loc.standort+'|'+monate[i]]={brutto:n.reduce((s,x)=>s+(parseFloat(x.umsatzBrutto)||0),0),beh:n.reduce((s,x)=>s+(x.anzahlBehandlungen||0),0),stand:f.stand||''};
     });
   }
-  if(!D.thevea.rows.length)return;
+  const f4=await f4P;
+  if(!D.thevea.rows.length){try{tvStammdaten(jahr,az,f4);}catch(e){console.warn('Stammdaten:',e);}return;}
   const cut=new Date(TV_LOCS[0].cutover+'T00:00:00');
   const vorher=D.raw.length;
   D.raw=D.raw.filter(r=>{
@@ -762,7 +774,80 @@ async function tvLaden(){
   D.raw=D.raw.concat(D.thevea.rows);
   D.thevea.bis=D.thevea.rows.filter(r=>r.kind==='erbracht').reduce((m,r)=>r.datum>m?r.datum:m,null);
   D.thevea.ok=true;
+  try{tvStammdaten(jahr,az,f4);}catch(e){console.warn('Stammdaten:',e);}
   console.log('thevea:',D.thevea.rows.length,'Termine bewertet,',D.thevea.medifoxEntfernt,'Medifox-Zeilen ab Cutover ersetzt');
+}
+// ── Stammdaten aus den Exporten ──────────────────────────────────────────────
+// Namen, Standort und Arbeitszeiten kommen aus thevea (Werneck) und Medifox
+// (Kitzingen). Der Weekly Tracker bleibt Rückfall: für Monate, die kein Export
+// abdeckt, und für die Planwerte je Person. Damit Medifox-Zeilen aus der Zeit
+// vor dem Cutover („Schmitt, Angie") und thevea-Zeilen („Schmitt, Angelina")
+// an derselben Person hängen, werden Tracker-Namen auf den Exportnamen
+// umgeschrieben; der alte Name bleibt als `plan` für die Plan-Suche erhalten.
+const TV_AZ_F4='/12_Code/Controlling/auslastung_historie_f4.json';
+function tvSpanMin(a,b){const x=String(a||'').split(':'),y=String(b||'').split(':');return(+y[0]*60+(+y[1]||0))-(+x[0]*60+(+x[1]||0));}
+function tvWochenStd(rec){return(rec&&rec.zeitspannen||[]).reduce((s,z)=>s+Math.max(0,tvSpanMin(z.from,z.until)),0)/60;}
+function tvGiltIm(rec,jahr,mi){
+  const a=new Date(jahr,mi-1,1),e=new Date(jahr,mi,0,23,59,59);
+  const vf=rec.validFrom?new Date(rec.validFrom+'T00:00:00'):null,vu=rec.validUntil?new Date(rec.validUntil+'T23:59:59'):null;
+  return(!vf||vf<=e)&&(!vu||vu>=a);
+}
+function tvStammdaten(jahr,az,f4){
+  const ctrl=D.ctrl||[];
+  const findCtrl=n=>ctrl.find(t=>tvNorm(t.n)===tvNorm(n));
+  const r1=x=>Math.round(x*10)/10;
+  // 1. Tracker-Namen auf Exportnamen umschreiben
+  const alias={};
+  Object.values(D.thevea.personen||{}).forEach(p=>{
+    if(/^[a-z]\.$/.test(tvNorm(p.nn)))return;
+    const c=tvCtrlName(p.vn,p.nn,ctrl);
+    if(c!==p.name&&findCtrl(c))alias[c]=p.name;
+  });
+  ctrl.forEach(t=>{if(alias[t.n]){t.plan=t.plan||t.n;t.n=alias[t.n];}});
+  (D.raw||[]).forEach(r=>{if(r.src!=='thevea'&&alias[r.name])r.name=alias[r.name];});
+  // 2. Arbeitszeiten aus thevea (Werneck)
+  Object.values(D.thevea.personen||{}).forEach(p=>{
+    const recs=(az[p.suf]||[]).filter(r=>r&&r.personId===p.id);if(!recs.length)return;
+    let t=findCtrl(p.name);
+    // Kitzinger Personal steht in thevea nur mit einem Platzhalter-Eintrag.
+    if(t&&t.s&&!/^KIMOJO/.test(t.s))return;
+    if(!t){t={n:p.name,s:p.standort,b:p.standort==='KIMOJO Ergo'?'Ergo':'Physio',wh:0,mh:{},quelle:'thevea'};ctrl.push(t);}
+    t.mh=t.mh||{};
+    for(let mi=1;mi<=12;mi++){
+      const r=recs.filter(x=>tvGiltIm(x,jahr,mi)).sort((a,b)=>String(b.validFrom||'').localeCompare(String(a.validFrom||'')))[0];
+      if(r)t.mh[MN[mi-1]]=r1(tvWochenStd(r));
+    }
+    const cur=recs.find(r=>r.isCurrentlyValid)||recs[0];t.wh=r1(tvWochenStd(cur));t.azQuelle='thevea';
+  });
+  // 3. Arbeitszeiten aus Medifox (Kitzingen): Stunden je Monat aus den
+  //    Tagesdaten, nur anwesende Tage; auf Wochenstunden normiert (÷ 4,33),
+  //    weil das Dashboard Wochenstunden je Monat erwartet.
+  const std={},tage={};
+  (Array.isArray(f4)?f4:[]).forEach(day=>{
+    const d=String(day&&day.onDay||'');if(!d.startsWith(jahr+'-'))return;const mi=+d.slice(5,7);
+    (tage[mi]=tage[mi]||new Set()).add(d);
+    (day.spalten||[]).forEach(s=>{
+      if(!s||s.IstAbwesend)return;
+      const n=String(s.Nachname||'').trim()+', '+String(s.Vorname||'').trim();if(/club/i.test(n))return;
+      const min=(s.Arbeitszeiten||[]).reduce((a,z)=>a+Math.max(0,tvSpanMin(z.Start,z.Ende)),0);if(min<=0)return;
+      (std[n]=std[n]||{})[mi]=(std[n][mi]||0)+min/60;
+    });
+  });
+  // Nur Monate, die die Historie (fast) vollständig abdeckt; ein angerissener
+  // Monat würde sonst als Teilzeit aussehen.
+  const voll=mi=>(tage[mi]&&tage[mi].size>=20);
+  Object.keys(std).forEach(n=>{
+    let t=findCtrl(n);
+    if(!t){t={n,s:'PF im Park',b:'Physio',wh:0,mh:{},quelle:'medifox'};ctrl.push(t);}
+    t.mh=t.mh||{};
+    const ks=Object.keys(std[n]).map(Number).filter(voll).sort((a,b)=>b-a);
+    if(!ks.length)return;
+    ks.forEach(mi=>{t.mh[MN[mi-1]]=r1(std[n][mi]/4.33);});
+    if(!t.wh)t.wh=t.mh[MN[ks[0]-1]]||0;
+    t.azQuelle=t.azQuelle?t.azQuelle+'+medifox':'medifox';
+  });
+  D.ctrl=ctrl;
+  D.thevea.stammdaten={aliase:Object.keys(alias).length,thevea:ctrl.filter(t=>/thevea/.test(t.azQuelle||'')).length,medifox:ctrl.filter(t=>/medifox/.test(t.azQuelle||'')).length,neu:ctrl.filter(t=>t.quelle).length};
 }
 function tvHeroSub(filtered,theraNames){
   const tv=filtered.filter(r=>r.src==='thevea'&&tvRowPasst(r,theraNames));
@@ -3436,7 +3521,7 @@ function rT(){
     const a=agg[t.n]||{rev:0,cnt:0};
     const h=numWeeks?getWhW(t,months):getWhM(t,months);
     const ep=h>0?a.rev/h:0;
-    const planRev=getPlanTherapist(t.n,months);
+    const planRev=getPlanTherapist(t.plan||t.n,months);
     return{...t,u:a.rev,b:a.cnt,p:ep,planRev};});
   const sb=document.getElementById('so').value;
   if(sb==='ud')list.sort((a,b)=>b.p-a.p);else if(sb==='ua')list.sort((a,b)=>a.p-b.p);
