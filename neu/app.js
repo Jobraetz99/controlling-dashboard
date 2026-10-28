@@ -9,8 +9,8 @@ const PAGES=[
   {id:'vorschau',l:'Jahresvorschau'},
   {id:'planist',l:'Plan vs. Ist'},
   {id:'auslastung',l:'Auslastung'},
-  {id:'termine',l:'Terminvergabe',alt:true},
-  {id:'therapeuten',l:'Therapeuten',alt:true},
+  {id:'termine',l:'Terminvergabe'},
+  {id:'therapeuten',l:'Therapeuten'},
   {id:'krankenstand',l:'Krankenstand',alt:true},
   {id:'bwa',l:'BWA',alt:true},
   {id:'cashflow',l:'Cashflow',alt:true},
@@ -83,7 +83,7 @@ function rNav(){
 function rPage(){
   const el=document.getElementById('page');if(!el)return;
   const p=PAGES.find(x=>x.id===page)||PAGES[0];
-  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='vorschau'?pVorschau():p.id==='planist'?pPlanIst():p.id==='auslastung'?pAuslastung():pAlt(p);
+  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='vorschau'?pVorschau():p.id==='planist'?pPlanIst():p.id==='auslastung'?pAuslastung():p.id==='termine'?pTermine():p.id==='therapeuten'?pTherapeuten():pAlt(p);
   window.scrollTo({top:0});
 }
 function pAlt(p){
@@ -280,21 +280,16 @@ function pErbracht(){
   h+='<p class="hint">„thevea-Abrechnung“ ist die Umsatzstatistik brutto aus thevea selbst und zählt nur schon abgerechnete Einheiten, liegt deshalb unter dem Kalenderwert. „Standardsatz“ sind Termine, deren Preis weder thevea noch die GKV-Liste kannte.'
     +(ungew?` ${n0(ungew)} Patiententermine ohne Rezept bei Personen, die nicht behandeln (Club-Einweisungen, Beratungen), sind nicht gewertet.`:'')
     +(extra.length?` Kitzingen ohne ${n0(extra.length)} Club-, T-RENA- und Kurspositionen (${eur0(extra.reduce((s,r)=>s+r.price,0))}).`:'')+'</p></section>';
-  // Nach Therapeut:in
-  const tl=Object.keys(byT).map(n=>Object.assign({name:n},byT[n])).sort((a,b)=>b.gesamt-a.gesamt);
-  h+=`<section class="sec"><div class="sec-h"><h2>Nach Therapeut:in</h2><span class="sub">${tl.length} Personen</span></div><div class="tbl-wrap"><table><thead><tr><th>Therapeut:in</th><th>Standort</th><th class="r">Termine</th><th class="r">Stattgefunden</th><th class="r">Ohne Status</th><th class="r">Ausfall</th><th class="r">Reserviert</th><th class="r">Gesamt</th></tr></thead><tbody>`;
-  tl.forEach(t=>{h+=`<tr><td>${esc(t.name)}</td><td>${siteTag(t.standort)}</td><td class="r">${n0(t.n)}</td><td class="r">${eur0(t.erbracht)}</td><td class="r">${eur0(t.offen)}</td><td class="r">${eur0(t.ausfall)}</td><td class="r">${eur0(t.reserviert)}</td><td class="r"><b>${eur0(t.gesamt)}</b></td></tr>`;});
-  h+='</tbody></table></div></section>';
-  // Nach Leistung je Standort
-  h+=`<section class="sec"><div class="sec-h"><h2>Nach Leistung</h2><span class="sub">Top 15 je Standort</span></div><div class="grid g3" style="align-items:start">`;
-  sitesAktiv().filter(s=>bySite[s]).forEach(s=>{
-    const ll=Object.values(byL).filter(l=>l.standort===s).sort((a,b)=>b.sum-a.sum);
-    h+=`<div><div style="margin-bottom:6px">${siteTag(s)}</div><div class="tbl-wrap"><table style="min-width:0"><thead><tr><th>Leistung</th><th class="r">n</th><th class="r">ø</th><th class="r">Umsatz</th></tr></thead><tbody>`;
-    ll.slice(0,15).forEach(l=>{h+=`<tr><td style="white-space:normal">${esc(String(l.hm).slice(0,48))}</td><td class="r">${n0(l.n)}</td><td class="r">${n1(l.sum/l.n)} €</td><td class="r"><b>${eur0(l.sum)}</b></td></tr>`;});
-    if(ll.length>15)h+=`<tr><td colspan="4" class="c-m">… ${ll.length-15} weitere</td></tr>`;
-    h+='</tbody></table></div></div>';
+  // Nach Therapeut:in: Umsatz, Stunden, € je Stunde; Klick klappt die Tage auf
+  const amp=v=>v>=65?'p-g':v>=56?'p-a':'p-r';
+  const tl=Object.keys(byT).map(n=>{const t=D.ctrl.find(c=>c.n===n);const st=t?tvStdSumme(t,months):{soll:0,anw:0,tracker:true};return Object.assign({name:n,ctrl:t,soll:st.soll,anw:st.anw,tracker:st.tracker},byT[n]);}).sort((a,b)=>b.gesamt-a.gesamt);
+  h+=`<section class="sec"><div class="sec-h"><h2>Nach Therapeut:in</h2><span class="sub">${tl.length} Personen · Zeile anklicken für die Tage</span></div><div class="tbl-wrap"><table><thead><tr><th>Therapeut:in</th><th>Standort</th><th class="r">Termine</th><th class="r">Gesamt</th><th class="r">Stattgefunden</th><th class="r">Geplant</th><th class="r">Ausfall · Reserv.</th><th class="r">Soll h</th><th class="r">Anw. h</th><th class="r">€ / Vertragsstd.</th><th class="r">€ / anw. Std.</th></tr></thead><tbody>`;
+  tl.forEach((t,i)=>{
+    const ev=t.soll>0?t.gesamt/t.soll:null,ea=t.anw>0?t.gesamt/t.anw:null;
+    h+=`<tr class="t-row" onclick="toggleTage('tg${i}')" style="cursor:pointer"><td><b>${esc(t.name)}</b></td><td>${siteTag(t.standort)}</td><td class="r">${n0(t.n)}</td><td class="r"><b>${eur0(t.gesamt)}</b></td><td class="r">${eur0(t.erbracht)}</td><td class="r">${eur0(t.offen)}</td><td class="r c-m">${eur0(t.ausfall+t.reserviert)}</td><td class="r">${n1(t.soll)}${t.tracker?' <span title="Stunden aus dem Weekly Tracker">*</span>':''}</td><td class="r">${n1(t.anw)}</td><td class="r">${ev==null?'—':`<span class="pill ${amp(ev)}">${n1(ev)}</span>`}</td><td class="r">${ea==null?'—':`<span class="pill ${amp(ea)}">${n1(ea)}</span>`}</td></tr>`;
+    h+=`<tr id="tg${i}" style="display:none"><td colspan="11" style="padding:0 0 10px 0;background:var(--bg)">${tageTabelle(t,rows.filter(r=>r.name===t.name))}</td></tr>`;
   });
-  h+='</div></section>';
+  h+='</tbody></table></div><p class="hint">€ je Stunde = Umsatz der Person ÷ Soll-Stunden bzw. anwesende Stunden des Zeitraums; Ampel ab 65 grün, ab 56 gelb. Stern: Stunden aus dem Weekly Tracker ohne Abwesenheiten.</p></section>';
   // Methodik
   h+=`<section class="sec"><details><summary style="cursor:pointer;font-weight:600">Wie gerechnet wird</summary><p class="hint" style="margin-top:8px">Jeder Kalender-Slot zählt einzeln, zwei 20-Minuten-Termine sind zwei KG. Preis je Termin: zuerst der Wert, den thevea für die Verordnung ausweist (Verordnungswert-Prognose, inklusive Privat-, Beihilfe-, BG-Sätzen und Hausbesuchspauschale), sonst das Heilmittel nach der GKV-Preisliste 2026 plus Hausbesuchspauschale je Besuch, zuletzt der Standardsatz Krankengymnastik. Termine ohne Status zählen mit Planwert, Ausfall (ausgefallen oder abgesagt) mit dem Heilmittelwert. Reservierungen sind Patiententermine ohne Verordnung bei Behandler:innen mit mindestens ${TV_BEHANDLER_MIN} Rezeptterminen: 20 Min = KG 29,63 €, 30 Min = MLD-30 35,97 €, 45 Min = MLD-45 53,94 €, andere Längen als Vielfache von 20 Min KG. Blocker zählen nicht. Ab 27.07.2026 (Ergo 01.08.) ersetzt der thevea-Kalender die Medifox-Exporte für KIMOJO; Kitzingen bleibt Medifox ohne Club, T-RENA und Präventionskurse.</p></details></section>`;
   return h;
@@ -500,5 +495,81 @@ function pAuslastung(){
   h+=`<section class="sec"><div class="sec-h"><h2>Je Therapeut:in</h2><span class="sub">${pers.length} Personen · ${esc(zeitraumLabel())}</span></div><div class="tbl-wrap"><table><thead><tr><th>Therapeut:in</th><th>Standort</th><th class="r">Auslastung</th><th class="r">brutto</th><th class="r">Patientenzeit</th><th class="r">verfügbar</th><th class="r">Tage</th></tr></thead><tbody>`;
   pers.forEach(p=>{h+=`<tr><td>${esc(p.name)}</td><td>${siteTag(p.site)}</td><td class="r">${amp(p.pct)}</td><td class="r c-m">${p.brutto==null?'—':n1(p.brutto)+' %'}</td><td class="r">${n1(p.geb/60)} h</td><td class="r">${n1(p.kap/60)} h</td><td class="r c-m">${p.tage}</td></tr>`;});
   h+='</tbody></table></div><p class="hint">Werneck: Patientenminuten ÷ verfügbare Minuten je Person aus der Patientenchecker-Messung, brutto gegen die Arbeitsminuten. Kitzingen: gebuchte Minuten ÷ anwesende Soll-Minuten aus Medifox. Ampel: ≥ 90 % grün, ≥ 80 % gelb.</p></section>';
+  return h;
+}
+
+
+// Tageszeilen einer Person auf der Erbracht-Seite: Termine, Umsatz, Stunden.
+function toggleTage(id){const el=document.getElementById(id);if(el)el.style.display=el.style.display==='none'?'':'none';}
+function tageTabelle(t,rows){
+  const byD={};
+  rows.forEach(r=>{let y;if(r.datum){y=ymdP(r.datum);}else if(r.dateKey){const p=r.dateKey.split('-');y=p[0]+'-'+String(p[1]).padStart(2,'0')+'-'+String(p[2]).padStart(2,'0');}else return;
+    const d=byD[y]||(byD[y]={n:0,sum:0,erb:0,offen:0,aus:0,res:0});d.n++;d.sum+=r.price;if(r.kind==='erbracht')d.erb+=r.price;else if(r.kind==='offen')d.offen+=r.price;else if(r.kind==='ausfall')d.aus+=r.price;else d.res+=r.price;});
+  const tag=t.ctrl&&t.ctrl.tag||{};
+  const ymds=[...new Set([...Object.keys(byD),...Object.keys(tag).filter(y=>{const mi=+y.slice(5,7);return getActiveMonths().includes(MN[mi-1])&&y.slice(0,4)==String(new Date().getFullYear());})])].sort();
+  if(!ymds.length)return'<div class="empty">Keine Tage.</div>';
+  const h0=ymdP(heute());
+  let h='<div class="tbl-wrap" style="margin:0"><table style="min-width:0;font-size:12px"><thead><tr><th>Tag</th><th class="r">Termine</th><th class="r">Umsatz</th><th class="r">Stattgef.</th><th class="r">Geplant</th><th class="r">Ausf. · Res.</th><th class="r">Soll h</th><th class="r">Anw. h</th><th class="r">€ / anw. Std.</th></tr></thead><tbody>';
+  ymds.forEach(y=>{const d=byD[y]||{n:0,sum:0,erb:0,offen:0,aus:0,res:0},s=tag[y]||{soll:0,anw:0};if(!d.n&&!s.soll)return;const dt=ausYmd(y);
+    const abw=s.soll>0&&s.anw===0;const eph=s.anw>0?d.sum/(s.anw/60):null;
+    h+=`<tr${y===h0?' class="today"':''}${y>h0?' style="color:var(--faint)"':''}><td>${esc(fDat(dt))}${abw?' <span class="pill p-n">abwesend</span>':''}</td><td class="r">${n0(d.n)}</td><td class="r"><b>${eur0(d.sum)}</b></td><td class="r">${eur0(d.erb)}</td><td class="r">${eur0(d.offen)}</td><td class="r c-m">${eur0(d.aus+d.res)}</td><td class="r">${s.soll?n1(s.soll/60):'—'}</td><td class="r">${s.soll?n1(s.anw/60):'—'}</td><td class="r">${eph==null?'—':n1(eph)}</td></tr>`;});
+  return h+'</tbody></table></div>';
+}
+
+
+// ── Terminvergabe ────────────────────────────────────────────────────────
+// Tageswerte aus dem Weekly Tracker: „Termine vereinbart“ und „davon
+// Neuaufnahmen/Neuanfragen“. Wochenwerte sind Summen, ø je Tag teilt durch
+// die Tage mit Eintrag.
+function termineQuellen(){
+  const tt=D.trackerTage||{};
+  return[{site:'KIMOJO Physio',d:tt.physio||[]},{site:'KIMOJO Ergo',d:tt.ergo||[]},{site:'PF im Park',d:tt.phfip||[]}].filter(q=>sitesAktiv().includes(q.site));
+}
+function pTermine(){
+  const quellen=termineQuellen();const h0=heute(),hs=ymdP(h0);
+  const months=getActiveMonths(),zr=new Set(tageImZeitraum(months));
+  const sum=(arr,f)=>arr.reduce((s,x)=>s+(x[f]||0),0);
+  let h=`<section class="sec"><div class="sec-h"><h2>Terminvergabe</h2><span class="sub">${esc(zeitraumLabel())} · Termine vereinbart je Tag, davon Neuanfragen</span></div>`;
+  if(!quellen.some(q=>q.d.length))return h+'<div class="empty">Keine Tracker-Einträge für die aktuelle Auswahl.</div></section>';
+  h+='<div class="grid g3">';
+  quellen.forEach(q=>{const inZr=q.d.filter(x=>x.ds<=hs&&zr.has(x.ds));const wo=q.d.filter(x=>x.ds>=ymdP(montag(h0))&&x.ds<=hs);const tage=inZr.filter(x=>x.vereinbart!=null).length;
+    h+=`<div class="kpi"><div class="l">${siteTag(q.site)}</div><div class="v">${n0(sum(inZr,'vereinbart'))}</div><div class="s">${esc(zeitraumLabel())} · ø <b>${tage?n1(sum(inZr,'vereinbart')/tage):'—'}</b> je Tag · Neuanfragen <b>${q.site==='PF im Park'?'—':n0(sum(inZr,'neu'))}</b></div><div class="s">diese Woche <b>${n0(sum(wo,'vereinbart'))}</b></div></div>`;});
+  h+='</div></section>';
+  // Wochen
+  const wochen={};quellen.forEach(q=>q.d.forEach(x=>{if(!zr.has(x.ds)||x.ds>hs)return;const kw=tvWoche(ausYmd(x.ds));const w=wochen[kw]||(wochen[kw]={kw,von:x.ds,sites:{}});if(x.ds<w.von)w.von=x.ds;const s=w.sites[q.site]||(w.sites[q.site]={v:0,n:0,t:0});s.v+=x.vereinbart||0;s.n+=x.neu||0;if(x.vereinbart!=null)s.t++;}));
+  const wl=Object.values(wochen).sort((a,b)=>b.kw-a.kw);
+  h+=`<section class="sec"><div class="sec-h"><h2>Nach Kalenderwoche</h2><span class="sub">Summe · ø je Tag · Neuanfragen</span></div><div class="tbl-wrap"><table><thead><tr><th>KW</th><th>Montag</th>${quellen.map(q=>`<th class="r">${esc(sn(q.site))}</th><th class="r c-m">ø / Tag</th><th class="r c-m">neu</th>`).join('')}</tr></thead><tbody>`;
+  wl.forEach(w=>{h+=`<tr${w.kw===tvWoche(h0)?' class="today"':''}><td>KW ${w.kw}</td><td class="c-m">${esc(fDat(montag(ausYmd(w.von))).replace(/^\S+\s/,''))}</td>`+quellen.map(q=>{const s=w.sites[q.site];return s?`<td class="r"><b>${n0(s.v)}</b></td><td class="r c-m">${s.t?n1(s.v/s.t):'—'}</td><td class="r c-m">${q.site==='PF im Park'?'—':n0(s.n)}</td>`:'<td class="r">—</td><td></td><td></td>';}).join('')+'</tr>';});
+  h+='</tbody></table></div></section>';
+  // Letzte Tage
+  const tage=[];for(let d=new Date(h0);tage.length<10;d=plusTage(d,-1)){if(d.getDay()>=1&&d.getDay()<=5)tage.unshift(ymdP(d));}
+  h+=`<section class="sec"><div class="sec-h"><h2>Letzte zehn Arbeitstage</h2><span class="sub">Termine vereinbart (davon neu)</span></div><div class="tbl-wrap"><table><thead><tr><th>Tag</th>${quellen.map(q=>`<th class="r">${esc(sn(q.site))}</th>`).join('')}</tr></thead><tbody>`;
+  tage.forEach(y=>{h+=`<tr${y===hs?' class="today"':''}><td>${esc(fDat(ausYmd(y)))}</td>`+quellen.map(q=>{const x=q.d.find(e=>e.ds===y);return`<td class="r">${x&&x.vereinbart!=null?`<b>${n0(x.vereinbart)}</b>${x.neu!=null?` <span class="c-m">(${n0(x.neu)})</span>`:''}`:'<span class="c-m">kein Eintrag</span>'}</td>`;}).join('')+'</tr>';});
+  h+='</tbody></table></div><p class="hint">Quelle: Weekly KPI Tracker je Standort. Kitzingen führt keine Neuanfragen-Spalte. Tage ohne Eintrag zählen nicht als null.</p></section>';
+  return h;
+}
+
+// ── Therapeuten · Umsatz pro Stunde ──────────────────────────────────────
+// Dieselben Zahlen wie auf Übersicht und Erbracht: Therapieumsatz je Person
+// gegen Soll-Stunden und anwesende Stunden des Zeitraums, gewichtet.
+function pTherapeuten(){
+  const months=getActiveMonths(),rows=erbrachtZeilen();
+  const agg={},cnt={};rows.forEach(r=>{agg[r.name]=(agg[r.name]||0)+r.price;cnt[r.name]=(cnt[r.name]||0)+1;});
+  const list=D.ctrl.filter(t=>matchS(t.s)&&agg[t.n]>0).map(t=>{const st=tvStdSumme(t,months);const u=agg[t.n];return{t,u,b:cnt[t.n],soll:st.soll,anw:st.anw,tracker:st.tracker,ev:st.soll>0?u/st.soll:null,ea:st.anw>0?u/st.anw:null,plan:getPlanTherapist(t.plan||t.n,months)};}).sort((a,b)=>(b.ev||0)-(a.ev||0));
+  if(!list.length)return'<section class="sec"><div class="empty">Keine Umsätze im gewählten Zeitraum.</div></section>';
+  const S=k=>list.reduce((s,x)=>s+x[k],0);const gV=S('soll')>0?S('u')/S('soll'):0,gA=S('anw')>0?S('u')/S('anw'):0;
+  const amp=v=>v>=65?'p-g':v>=56?'p-a':'p-r';const cls=v=>v>=65?'c-g':v>=56?'c-a':'c-r';
+  const gut=list.filter(x=>x.ev>=65).length,mittel=list.filter(x=>x.ev>=56&&x.ev<65).length,rot=list.filter(x=>x.ev<56).length;
+  let h=`<section class="sec"><div class="sec-h"><h2>Umsatz pro Stunde</h2><span class="sub">${esc(zeitraumLabel())} · ${esc(sn(aS))} · ${list.length} Personen</span></div><div class="grid">`;
+  h+=`<div class="kpi"><div class="l">€ je Vertragsstunde</div><div class="v ${cls(gV)}">${n1(gV)} €</div><div class="s">gewichtet · ${n0(S('soll'))} Soll-Stunden</div></div>`;
+  h+=`<div class="kpi"><div class="l">€ je anwesender Stunde</div><div class="v ${cls(gA)}">${n1(gA)} €</div><div class="s">gewichtet · ${n0(S('anw'))} anwesende Stunden</div></div>`;
+  h+=`<div class="kpi"><div class="l">Verteilung</div><div class="v"><span class="c-g">${gut}</span> · <span class="c-a">${mittel}</span> · <span class="c-r">${rot}</span></div><div class="s">≥ 65 · 56–65 · &lt; 56 € je Vertragsstunde</div></div>`;
+  const mitPlan=list.filter(x=>x.plan>0);h+=`<div class="kpi"><div class="l">Plan</div><div class="v">${mitPlan.filter(x=>x.u>=x.plan).length} / ${mitPlan.length}</div><div class="s">Personen über ihrem Umsatzplan</div></div>`;
+  h+='</div></section>';
+  h+=`<section class="sec"><div class="sec-h"><h2>Je Therapeut:in</h2><span class="sub">sortiert nach € je Vertragsstunde</span></div><div class="tbl-wrap"><table><thead><tr><th>Therapeut:in</th><th>Standort</th><th class="r">Soll h</th><th class="r">Anw. h</th><th class="r">Umsatz</th><th class="r">Plan</th><th class="r">Beh.</th><th class="r">€ / Vertragsstd.</th><th class="r">€ / anw. Std.</th><th style="min-width:110px"></th></tr></thead><tbody>`;
+  const mx=Math.max(...list.map(x=>x.u),1);
+  list.forEach(x=>{const pd=x.plan>0?(x.u-x.plan)/x.plan*100:null;
+    h+=`<tr><td><b>${esc(x.t.n)}</b></td><td>${siteTag(x.t.s)}</td><td class="r">${n1(x.soll)}${x.tracker?' <span title="Stunden aus dem Weekly Tracker">*</span>':''}</td><td class="r">${n1(x.anw)}</td><td class="r"><b>${eur0(x.u)}</b></td><td class="r">${pd==null?'<span class="c-m">—</span>':`<span class="c-m">${fmK(x.plan)}</span> <span class="pill ${pd>=0?'p-g':'p-r'}">${pd>=0?'+':''}${n0(pd)} %</span>`}</td><td class="r c-m">${n0(x.b)}</td><td class="r">${x.ev==null?'—':`<span class="pill ${amp(x.ev)}">${n1(x.ev)}</span>`}</td><td class="r">${x.ea==null?'—':`<span class="pill ${amp(x.ea)}">${n1(x.ea)}</span>`}</td><td><div class="bar"><i style="width:${x.u/mx*100}%;background:${x.ev>=65?'var(--green)':x.ev>=56?'var(--amber)':'var(--red)'}"></i></div></td></tr>`;});
+  h+='</tbody></table></div><p class="hint">Umsatz = Therapieumsatz des Zeitraums wie auf der Seite Erbracht (Kalenderwert, Kitzingen ohne Club, T-RENA und Kurse). Soll-Stunden aus thevea bzw. Medifox an den Kalendertagen ohne Feiertage, anwesende Stunden ohne Urlaub, Krankheit, Fortbildung; Stern = Tracker-Stunden ohne Abwesenheiten. Plan aus der Planung je Therapeut:in.</p></section>';
   return h;
 }
