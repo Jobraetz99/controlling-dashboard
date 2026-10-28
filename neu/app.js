@@ -12,7 +12,7 @@ const PAGES=[
   {id:'auslastung',l:'Auslastung'},
   {id:'termine',l:'Terminvergabe'},
   {id:'therapeuten',l:'Therapeuten'},
-  {id:'krankenstand',l:'Krankenstand',alt:true},
+  {id:'krankenstand',l:'Krankenstand'},
   {id:'bwa',l:'BWA',alt:true},
   {id:'cashflow',l:'Cashflow',alt:true},
   {id:'liquiditaet',l:'Liquidität',alt:true}
@@ -84,7 +84,7 @@ function rNav(){
 function rPage(){
   const el=document.getElementById('page');if(!el)return;
   const p=PAGES.find(x=>x.id===page)||PAGES[0];
-  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='abgerechnet'?pAbgerechnet():p.id==='vorschau'?pVorschau():p.id==='planist'?pPlanIst():p.id==='auslastung'?pAuslastung():p.id==='termine'?pTermine():p.id==='therapeuten'?pTherapeuten():pAlt(p);
+  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='abgerechnet'?pAbgerechnet():p.id==='vorschau'?pVorschau():p.id==='planist'?pPlanIst():p.id==='auslastung'?pAuslastung():p.id==='termine'?pTermine():p.id==='therapeuten'?pTherapeuten():p.id==='krankenstand'?pKrankenstand():pAlt(p);
   window.scrollTo({top:0});
 }
 function pAlt(p){
@@ -394,6 +394,92 @@ function pAbgerechnet(){
   h+=`<section class="sec"><div class="sec-h"><h2>Nach Therapeut:in</h2><span class="sub">${tl.length} Personen · sortiert nach Brutto</span></div><div class="tbl-wrap"><table><thead><tr><th>Therapeut:in</th><th>Standort</th><th class="r">Beh.</th><th class="r">Brutto</th><th class="r">Zuzahlung</th><th class="r">Netto</th><th class="r">ø je Beh.</th><th class="r">Offen</th><th style="min-width:110px"></th></tr></thead><tbody>`;
   tl.forEach(t=>{h+=`<tr><td><b>${esc(t.name)}</b></td><td>${siteTag(t.standort)}</td><td class="r">${n0(t.beh)}</td><td class="r"><b>${eur0(t.brutto)}</b></td><td class="r">${eur0(t.zuz)}${t.zuzEst?'*':''}</td><td class="r">${eur0(t.netto)}</td><td class="r">${oe(t.beh?t.brutto/t.beh:0)}</td><td class="r">${t.quelle==='medifox'?eur0(t.offen):'<span class="c-m">—</span>'}</td><td><div class="bar"><i style="width:${t.brutto/mx*100}%;background:${SITE_COL[t.standort]||'var(--blue)'}"></i></div></td></tr>`;});
   h+='</tbody></table></div><p class="hint">KIMOJO je Person aus der thevea-Statistik (Privatanteil dort nicht je Person ausweisbar); Kitzingen je Person aus den Medifox-Zeilen mit Kennzeichen „Abgerechnet“, Offen = noch nicht abgerechnete Leistungen. Ergo-Nachnamen ergänzt der Weekly Tracker.</p></section>';
+  return h;
+}
+
+// ── Krankenstand ─────────────────────────────────────────────────────────
+// Krankheitstage je Person aus den Stammdaten (t.tag[ymd].grund): thevea
+// Abwesenheiten KRANKHEIT seit dem Cutover (Werneck), Medifox-Abwesenheit
+// „Krank" seit Januar (Kitzingen). Für KIMOJO-Monate vor dem Cutover liefert
+// der Weekly Tracker die Krankheitstage je Tag (ohne Personenbezug).
+// Krankenquote = Krankheitsstunden ÷ Soll-Stunden (Vertragszeit), Tage nur bis heute.
+const KS_CUTOVER={'KIMOJO Physio':8,'KIMOJO Ergo':8};// ab diesem Monat zählt thevea
+function ksDaten(){
+  const months=getActiveMonths(),monthNums=months.map(m=>MN.indexOf(m)+1),h0=ymdP(heute());
+  const tage=new Set(tageImZeitraum(months).filter(d=>d<=h0));
+  const P=[],M={},S={};
+  const mAgg=()=>({sollTage:0,sollStd:0,krankTage:0,krankStd:0,personen:new Set(),tracker:0,quelle:'export'});
+  D.ctrl.filter(t=>matchS(t.s)&&t.tag).forEach(t=>{
+    const p={name:t.n,standort:t.s,sollTage:0,sollStd:0,krankTage:0,krankStd:0,urlaub:0,fortb:0,sonst:0,episoden:0,letzte:null,seit:null,bis:null,heuteKrank:false};
+    let prev=false;
+    Object.keys(t.tag).sort().forEach(d=>{
+      const x=t.tag[d];if(!x.soll)return;
+      const krank=x.grund==='KRANKHEIT';
+      if(d>h0){if(krank&&p.heuteKrank&&(!p.bis||d>p.bis))p.bis=d;return;}
+      if(!tage.has(d))return;
+      p.sollTage++;p.sollStd+=x.soll/60;
+      const m=+d.slice(5,7);const mm=M[m]||(M[m]=mAgg());mm.sollTage++;mm.sollStd+=x.soll/60;
+      const sk=t.s+'|'+m;const ss=S[sk]||(S[sk]=mAgg());ss.sollTage++;ss.sollStd+=x.soll/60;
+      if(krank){p.krankTage++;p.krankStd+=x.soll/60;mm.krankTage++;mm.krankStd+=x.soll/60;mm.personen.add(t.n);ss.krankTage++;ss.krankStd+=x.soll/60;ss.personen.add(t.n);p.letzte=d;if(!prev){p.episoden++;p.seit=d;}if(d===h0)p.heuteKrank=true;}
+      else if(x.grund==='URLAUB')p.urlaub++;else if(x.grund==='FORTBILDUNG')p.fortb++;else if(x.grund)p.sonst++;
+      prev=krank;
+    });
+    if(p.sollTage)P.push(p);
+  });
+  // Tracker-Krankheitstage je Standort und Monat (KIMOJO), nur bis heute
+  const tr={'KIMOJO Physio':(D.trackerTage&&D.trackerTage.physio)||[],'KIMOJO Ergo':(D.trackerTage&&D.trackerTage.ergo)||[]};
+  Object.keys(tr).forEach(site=>{if(!matchS(site))return;tr[site].forEach(x=>{if(!x.krank||!tage.has(x.ds))return;const m=+x.ds.slice(5,7);const ss=S[site+'|'+m]||(S[site+'|'+m]=mAgg());ss.tracker+=x.krank;});});
+  // Vor dem Cutover zählt der Tracker statt des Exports. Die thevea-Historie
+  // reicht nur 180 Tage zurück, deshalb kommt das Soll dieser Monate aus den
+  // Monatsstunden (tvStdMonat, Rückfall Tracker-Wochenstunden) und den
+  // Arbeitstagen Mo–Fr ohne Feiertage.
+  const jahr=new Date().getFullYear(),feier=tvFeiertage(jahr);
+  const arbeitstage=mi=>{let n=0;const tg=new Date(jahr,mi,0).getDate();for(let d=1;d<=tg;d++){const dt=new Date(jahr,mi-1,d),y=ymdP(dt);if(y>h0)break;if(dt.getDay()===0||dt.getDay()===6||feier.has(y))continue;n++;}return n;};
+  Object.keys(KS_CUTOVER).forEach(site=>{if(!matchS(site))return;monthNums.forEach(mi=>{if(mi>=KS_CUTOVER[site])return;const k=site+'|'+mi;const ss=S[k]||(S[k]=mAgg());const personen=D.ctrl.filter(t=>t.s===site);let sollStd=0,n=0;personen.forEach(t=>{const st=tvStdMonat(t,MN[mi-1]);if(st.soll>0){sollStd+=st.soll;n++;}});const at=arbeitstage(mi);if(!n||!at){delete S[k];return;}ss.quelle='tracker';ss.sollStd=sollStd*(at/arbeitstage0(mi));ss.sollTage=n*at;ss.personen=new Set();ss.krankTage=ss.tracker;ss.krankStd=ss.sollTage?ss.tracker*(ss.sollStd/ss.sollTage):0;});});
+  function arbeitstage0(mi){let n=0;const tg=new Date(jahr,mi,0).getDate();for(let d=1;d<=tg;d++){const dt=new Date(jahr,mi-1,d),y=ymdP(dt);if(dt.getDay()===0||dt.getDay()===6||feier.has(y))continue;n++;}return n;}
+  // Monatswerte neu aus den Standortwerten summieren (nach dem Tracker-Tausch)
+  const M2={};Object.keys(S).forEach(k=>{const m=+k.split('|')[1];const ss=S[k];const mm=M2[m]||(M2[m]={sollTage:0,sollStd:0,krankTage:0,krankStd:0,personen:new Set(),quellen:new Set()});mm.sollTage+=ss.sollTage;mm.sollStd+=ss.sollStd;mm.krankTage+=ss.krankTage;mm.krankStd+=ss.krankStd;ss.personen.forEach(n=>mm.personen.add(n));mm.quellen.add(ss.quelle);});
+  return{months,monthNums,P,M:M2,S,h0};
+}
+function pKrankenstand(){
+  const {months,monthNums,P,M,S,h0}=ksDaten();
+  const sub=`${esc(zeitraumLabel())} · ${esc(sn(aS))} · bis ${ausYmd(h0).toLocaleDateString('de-DE')}`;
+  if(!Object.keys(S).length)return`<section class="sec"><div class="sec-h"><h2>Krankenstand</h2><span class="sub">${sub}</span></div><div class="empty">Keine Arbeitszeiten im gewählten Zeitraum.</div></section>`;
+  const Sv=Object.values(S);const sum=k=>Sv.reduce((t,x)=>t+x[k],0);
+  const sollStd=sum('sollStd'),krankStd=sum('krankStd'),sollTage=sum('sollTage'),krankTage=sum('krankTage');
+  const quote=sollStd>0?krankStd/sollStd*100:null;
+  const amp=q=>q==null?'':q<=4?'c-g':q<=7?'c-a':'c-r';const pill=q=>q==null?'<span class="pill p-n">—</span>':`<span class="pill ${q<=4?'p-g':q<=7?'p-a':'p-r'}">${n1(q)} %</span>`;
+  const heuteKrank=P.filter(p=>p.heuteKrank);
+  const betroffen=P.filter(p=>p.krankTage>0).length;
+  let h=`<section class="sec"><div class="sec-h"><h2>Krankenstand</h2><span class="sub">${sub}</span></div><div class="grid">`;
+  h+=`<div class="kpi big"><div class="l">Krankenquote</div><div class="v ${amp(quote)}">${quote==null?'—':n1(quote)+' %'}</div><div class="s">${n0(krankStd)} von ${n0(sollStd)} Soll-Stunden krank</div></div>`;
+  h+=`<div class="kpi"><div class="l">Krankheitstage</div><div class="v">${n0(krankTage)}</div><div class="s">von ${n0(sollTage)} Soll-Arbeitstagen · ${n1(sollTage?krankTage/sollTage*100:0)} % der Tage</div></div>`;
+  h+=`<div class="kpi"><div class="l">Betroffene</div><div class="v">${betroffen} <span class="c-m" style="font-size:16px">/ ${P.length}</span></div><div class="s">Personen mit Krankheitstag · ø <b>${n1(betroffen?krankTage/betroffen:0)}</b> Tage je Betroffene:r</div></div>`;
+  h+=`<div class="kpi"><div class="l">Heute krank</div><div class="v ${heuteKrank.length?'c-r':'c-g'}">${heuteKrank.length}</div><div class="s">${heuteKrank.length?esc(heuteKrank.map(p=>p.name.split(',')[0]).join(', ')):'niemand gemeldet'}</div></div>`;
+  h+='</div>';
+  // Standorte
+  const bySite={};Sv.forEach(x=>{const k=Object.keys(S).find(kk=>S[kk]===x).split('|')[0];const a=bySite[k]||(bySite[k]={standort:k,sollTage:0,sollStd:0,krankTage:0,krankStd:0,personen:new Set(),quellen:new Set()});a.sollTage+=x.sollTage;a.sollStd+=x.sollStd;a.krankTage+=x.krankTage;a.krankStd+=x.krankStd;x.personen.forEach(n=>a.personen.add(n));a.quellen.add(x.quelle);});
+  const sites=Object.values(bySite);
+  const qTxt=q=>q.has('tracker')&&q.has('export')?'Export + Tracker':q.has('tracker')?'Tracker':'Export';
+  if(sites.length>1)h+='<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Standort</th><th class="r">Soll-Tage</th><th class="r">Krank-Tage</th><th class="r">Krank-Std.</th><th class="r">Quote</th><th class="r">Betroffene</th><th>Quelle</th></tr></thead><tbody>'+sites.map(a=>`<tr><td>${siteTag(a.standort)}</td><td class="r">${n0(a.sollTage)}</td><td class="r"><b>${n0(a.krankTage)}</b></td><td class="r">${n0(a.krankStd)}</td><td class="r">${pill(a.sollStd?a.krankStd/a.sollStd*100:null)}</td><td class="r">${a.personen.size||'—'}</td><td class="c-m">${qTxt(a.quellen)}</td></tr>`).join('')+'</tbody></table></div>';
+  h+='<p class="hint">Krankenquote = Krankheitsstunden ÷ Soll-Stunden der Vertragszeit (Feiertage abgezogen), nur Tage bis heute. Werneck aus den thevea-Abwesenheiten „Krankheit“ seit dem Cutover (Juli/August), davor aus den Krankheitstagen des Weekly Trackers (Tageszähler ohne Personenbezug, Stunden mit dem Tagesdurchschnitt bewertet); Kitzingen aus der Medifox-Abwesenheit „Krank“ seit Januar. Ampel bis 4 % grün, bis 7 % gelb.</p></section>';
+  // Nach Monat
+  h+=`<section class="sec"><div class="sec-h"><h2>Nach Monat</h2><span class="sub">Soll-Tage und Krankheitstage aller Personen des Standortfilters</span></div><div class="tbl-wrap"><table><thead><tr><th>Monat</th><th class="r">Soll-Tage</th><th class="r">Krank-Tage</th><th class="r">Krank-Std.</th><th class="r">Quote</th><th class="r">Betroffene</th><th style="min-width:110px"></th><th>Quelle</th></tr></thead><tbody>`;
+  const mx=Math.max(...Object.values(M).map(m=>m.sollStd?m.krankStd/m.sollStd*100:0),1);
+  monthNums.forEach(mi=>{const m=M[mi];if(!m||!m.sollTage)return;const q=m.sollStd?m.krankStd/m.sollStd*100:null;h+=`<tr><td>${MN[mi-1]}</td><td class="r">${n0(m.sollTage)}</td><td class="r"><b>${n0(m.krankTage)}</b></td><td class="r">${n0(m.krankStd)}</td><td class="r">${pill(q)}</td><td class="r">${m.personen.size||'—'}</td><td><div class="bar"><i style="width:${q==null?0:q/mx*100}%;background:${q<=4?'var(--green)':q<=7?'var(--amber)':'var(--red)'}"></i></div></td><td class="c-m">${qTxt(m.quellen)}</td></tr>`;});
+  h+=`<tr class="sum"><td>Summe</td><td class="r">${n0(sollTage)}</td><td class="r">${n0(krankTage)}</td><td class="r">${n0(krankStd)}</td><td class="r">${pill(quote)}</td><td class="r">${betroffen||'—'}</td><td></td><td></td></tr></tbody></table></div></section>`;
+  // Aktuell krank
+  if(heuteKrank.length){
+    h+=`<section class="sec"><div class="sec-h"><h2>Aktuell krank</h2><span class="sub">Stand heute</span></div><div class="tbl-wrap"><table><thead><tr><th>Therapeut:in</th><th>Standort</th><th>Seit</th><th>Gemeldet bis</th><th class="r">Tage in dieser Episode</th></tr></thead><tbody>`;
+    heuteKrank.forEach(p=>{const seit=ausYmd(p.seit),tage=Math.round((ausYmd(h0)-seit)/864e5)+1;h+=`<tr><td><b>${esc(p.name)}</b></td><td>${siteTag(p.standort)}</td><td>${seit.toLocaleDateString('de-DE')}</td><td>${p.bis?ausYmd(p.bis).toLocaleDateString('de-DE'):'<span class="c-m">offen</span>'}</td><td class="r">${tage}</td></tr>`;});
+    h+='</tbody></table></div></section>';
+  }
+  // Je Person
+  const tl=P.filter(p=>p.krankTage>0).sort((a,b)=>(b.sollStd?b.krankStd/b.sollStd:0)-(a.sollStd?a.krankStd/a.sollStd:0));
+  const ohne=P.length-tl.length;
+  h+=`<section class="sec"><div class="sec-h"><h2>Je Therapeut:in</h2><span class="sub">${tl.length} Personen mit Krankheitstagen · ${ohne} ohne</span></div><div class="tbl-wrap"><table><thead><tr><th>Therapeut:in</th><th>Standort</th><th class="r">Soll-Tage</th><th class="r">Krank-Tage</th><th class="r">Krank-Std.</th><th class="r">Quote</th><th class="r">Episoden</th><th>Zuletzt</th><th class="r">Urlaub</th><th class="r">Fortb.</th></tr></thead><tbody>`;
+  tl.forEach(p=>{const q=p.sollStd?p.krankStd/p.sollStd*100:null;h+=`<tr><td><b>${esc(p.name)}</b></td><td>${siteTag(p.standort)}</td><td class="r">${n0(p.sollTage)}</td><td class="r"><b>${n0(p.krankTage)}</b></td><td class="r">${n0(p.krankStd)}</td><td class="r">${pill(q)}</td><td class="r">${p.episoden}</td><td>${p.letzte?ausYmd(p.letzte).toLocaleDateString('de-DE'):'—'}</td><td class="r c-m">${n0(p.urlaub)}</td><td class="r c-m">${n0(p.fortb)}</td></tr>`;});
+  h+='</tbody></table></div><p class="hint">Nur Personen mit Krankheitstagen im Zeitraum; Werneck erst ab dem thevea-Cutover personenscharf, die Tracker-Krankheitstage davor stehen nur in den Monats- und Standortwerten. Episoden = zusammenhängende Krankmeldungen, Urlaub und Fortbildung als Arbeitstage zum Vergleich.</p></section>';
   return h;
 }
 

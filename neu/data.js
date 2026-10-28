@@ -396,8 +396,8 @@ function tvStammdaten(jahr,az,f4,abwes){
         const wd=TV_WD[dt.getDay()];
         const min=(rec.zeitspannen||[]).filter(z=>z.wochentag===wd).reduce((s,z)=>s+Math.max(0,tvSpanMin(z.from,z.until)),0);
         if(!min)continue;soll+=min;
-        const da=!abw.some(a=>String(a.from)<=ymd&&String(a.until)>=ymd);if(da)anw+=min;
-        (t.tag=t.tag||{})[ymd]={soll:min,anw:da?min:0};
+        const ab=abw.find(a=>String(a.from)<=ymd&&String(a.until)>=ymd),da=!ab;if(da)anw+=min;
+        (t.tag=t.tag||{})[ymd]={soll:min,anw:da?min:0,grund:ab?String(ab.abwesenheitGrund||'SONSTIGES'):null};
       }
       t.std[MN[mi-1]]={soll:r1(soll/60),anw:r1(anw/60),q:'thevea'};
     }
@@ -420,7 +420,7 @@ function tvStammdaten(jahr,az,f4,abwes){
       const min=(s.Arbeitszeiten||[]).reduce((a,z)=>a+Math.max(0,tvSpanMin(z.Start,z.Ende)),0);
       const m=(muster[n]=muster[n]||{});const mm=(m[mi]=m[mi]||{});const w=(mm[wd]=mm[wd]||[]);
       w.push(min);gesehen.add(n);
-      (hist[n]=hist[n]||{})[d]={min,abw:!!s.IstAbwesend};
+      (hist[n]=hist[n]||{})[d]={min,abw:!!s.IstAbwesend,grund:s.IstAbwesend?(/krank/i.test(String(s.Abwesenheitsbezeichnung||''))?'KRANKHEIT':/urlaub/i.test(String(s.Abwesenheitsbezeichnung||''))?'URLAUB':/fortbild/i.test(String(s.Abwesenheitsbezeichnung||''))?'FORTBILDUNG':'SONSTIGES'):null};
     });
     // Wer an diesem Tag keine Spalte hat, arbeitet an diesem Wochentag nicht.
     Object.keys(muster).forEach(n=>{if(gesehen.has(n))return;const mm=(muster[n][mi]=muster[n][mi]||{});(mm[wd]=mm[wd]||[]).push(0);});
@@ -455,7 +455,7 @@ function tvStammdaten(jahr,az,f4,abwes){
       const mm=musterMon(mi)||muster[n][mi];const tageM=new Date(jahr,mi,0).getDate();let soll=0,anw=0,ist=0;
       for(let d=1;d<=tageM;d++){
         const dt=new Date(jahr,mi-1,d),ymd=tvYmd(dt);
-        if(histTage.has(ymd)){const h=(hist[n]||{})[ymd];if(!h||!h.min)continue;soll+=h.min;ist++;if(!h.abw)anw+=h.min;(t.tag=t.tag||{})[ymd]={soll:h.min,anw:h.abw?0:h.min};continue;}
+        if(histTage.has(ymd)){const h=(hist[n]||{})[ymd];if(!h||!h.min)continue;soll+=h.min;ist++;if(!h.abw)anw+=h.min;(t.tag=t.tag||{})[ymd]={soll:h.min,anw:h.abw?0:h.min,grund:h.grund};continue;}
         if(feier.has(ymd))continue;
         const w=mm&&mm[dt.getDay()];if(!w||!w.length)continue;const min=modus(w);if(!min)continue;soll+=min;anw+=min;(t.tag=t.tag||{})[ymd]={soll:min,anw:min};
       }
@@ -997,7 +997,7 @@ function xlDatum(dv){
 function parseTrackerTage(rows){
   if(!rows||rows.length<2)return[];
   const hdr=rows[0]||[];
-  let cD=-1,cV=-1,cN=-1;
+  let cD=-1,cV=-1,cN=-1,cK=-1;
   for(let c=0;c<hdr.length;c++){
     const h=String(hdr[c]||'').toLowerCase().trim();
     if(h==='datum')cD=c;
@@ -1005,6 +1005,7 @@ function parseTrackerTage(rows){
     // „Neuaufnahmen" und „Neuanfragen" meinen dasselbe — jemand kommt neu
     // dazu. Sie landen deshalb in derselben Kennzahl und nicht in zwei.
     if(h.indexOf('neuaufnahm')>=0||h.indexOf('neuanfrag')>=0)cN=c;
+    if(h.indexOf('krankheitstag')>=0)cK=c;
   }
   if(cD<0||cV<0)return[];
   const zahl=v=>{
@@ -1016,12 +1017,12 @@ function parseTrackerTage(rows){
   for(let i=1;i<rows.length;i++){
     const r=rows[i];if(!r)continue;
     const ds=xlDatum(r[cD]);if(!ds)continue;
-    const v=zahl(r[cV]),n=cN<0?null:zahl(r[cN]);
+    const v=zahl(r[cV]),n=cN<0?null:zahl(r[cN]),k=cK<0?null:zahl(r[cK]);
     // Eine leere Zeile ist KEIN Tag mit null Terminen, sondern ein Tag ohne
     // Eingabe. Als 0 gezeigt sähe ein vergessener Eintrag aus wie ein
     // katastrophaler Tag — und das ist die gefährlichere Verwechslung.
-    if(v===null&&n===null)continue;
-    out.push({ds,vereinbart:v,neu:n});
+    if(v===null&&n===null&&k===null)continue;
+    out.push({ds,vereinbart:v,neu:n,krank:k});
   }
   return out.sort((a,b)=>a.ds<b.ds?-1:1);
 }
