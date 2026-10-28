@@ -771,11 +771,11 @@ function rTV(){
   const el=document.getElementById('tvDiv');if(!el)return;
   const hinweis=t=>'<div class="cd"><p style="font-size:12.5px;color:var(--muted);margin:0">'+t+'</p></div>';
   if(!D.thevea||!D.thevea.ok){el.innerHTML=hinweis('Keine thevea-Historie geladen'+(D.thevea&&D.thevea.fehlt.length?' (fehlt: '+D.thevea.fehlt.join(', ')+')':'')+'.');return;}
-  if(aS==='PF im Park'){el.innerHTML=hinweis('PF im Park läuft weiter über Medifox. Der thevea-Kalender gilt für Werneck Physio und Ergo.');return;}
   const months=getActiveMonths();const monthNums=months.map(m=>MN.indexOf(m)+1);
+  if(aS==='PF im Park'){el.innerHTML=tvKitzingen(months,monthNums)||hinweis('Keine Medifox-Umsätze für PF im Park im gewählten Zeitraum.');return;}
   const theraNames=new Set(D.ctrl.filter(t=>matchS(t.s)).map(t=>t.n));
   const rows=D.thevea.rows.filter(r=>monthNums.includes(r.month)&&tvRowPasst(r,theraNames));
-  if(!rows.length){el.innerHTML=hinweis('Keine thevea-Termine im gewählten Zeitraum.');return;}
+  if(!rows.length){el.innerHTML=hinweis('Keine thevea-Termine im gewählten Zeitraum.')+(aS==='Alle'?tvKitzingen(months,monthNums):'');return;}
   const agg=()=>({n:0,erbracht:0,offen:0,ausfall:0,reserviert:0,gesamt:0,ng:0,nAusfall:0,nReserviert:0});
   const add=(a,r)=>{a.n++;a[r.kind]+=r.price;a.gesamt+=r.price;if(r.quelle==='geschaetzt')a.ng++;if(r.kind==='ausfall')a.nAusfall++;if(r.kind==='reserviert')a.nReserviert++;};
   const byM={},byT={},byH={},tot=agg();
@@ -813,7 +813,44 @@ function rTV(){
     +'<b>Preis je Termin:</b> zuerst der Wert, den thevea selbst für diese Verordnung ausweist (Verordnungswert-Prognose, inklusive Privat-, Beihilfe- und BG-Sätzen und Hausbesuchspauschale); sonst das Heilmittel nach der GKV-Preisliste 2026 plus Hausbesuchspauschale je Besuch; zuletzt der Standardsatz Krankengymnastik. '
     +'<b>Reservierungen</b> sind Patiententermine ohne Verordnung: 20 Min = KG 29,63 €, 30 Min = MLD-30 35,97 €, 45 Min = MLD-45 53,94 €, andere Längen als Vielfache von 20 Min KG (40 Min = zwei KG). '
     +'<b>Blocker</b> und andere interne Einträge zählen nicht. <b>Ab 27.07.2026</b> (Ergo 01.08.) ersetzt der thevea-Kalender die Medifox-Exporte für KIMOJO; PF im Park bleibt Medifox.</p></div>';
+  if(aS==='Alle')h+=tvKitzingen(months,monthNums);
   el.innerHTML=h;
+}
+// ── Kitzingen (PF im Park) ───────────────────────────────────────────────────
+// PF im Park läuft weiter über Medifox. Der Block zeigt dieselbe Sicht wie für
+// Werneck: je Monat und je Mitarbeiter:in. Der Kraft-Präventionskurs zu 120 €
+// wird herausgerechnet, weil er kein Behandlungsumsatz ist, sondern ein
+// Kursentgelt; er wird daneben als eigene Zahl gezeigt, damit nichts
+// stillschweigend verschwindet. Erkannt wird er am Leistungstext, nicht am
+// Preis — ein Preis kann sich ändern, der Name des Kurses nicht.
+const TV_KURS=/pr(ä|ae)ventionskurs/i;
+function tvIstKurs(r){return TV_KURS.test(String(r.leistung||''));}
+function tvKitzingen(months,monthNums){
+  const alle=D.raw.filter(r=>r.src!=='thevea'&&String(r.filiale||'')==='PHFIP'&&monthNums.includes(r.month));
+  if(!alle.length)return '';
+  const agg=()=>({n:0,sum:0,nKurs:0,kurs:0});
+  const add=(a,r)=>{if(tvIstKurs(r)){a.nKurs++;a.kurs+=r.price;}else{a.n++;a.sum+=r.price;}};
+  const byM={},byT={},byL={},tot=agg();
+  alle.forEach(r=>{add(byM[r.month]||(byM[r.month]=agg()),r);add(tot,r);add(byT[r.name]||(byT[r.name]=agg()),r);
+    if(!tvIstKurs(r)){const l=byL[r.leistung||'—']||(byL[r.leistung||'—']={n:0,sum:0});l.n++;l.sum+=r.price;}});
+  const z=(label,a,bold)=>`<tr${bold?' style="font-weight:700"':''}><td>${label}</td><td class="r">${a.n}</td><td class="r"><b>${fm(a.sum)}</b></td><td class="r">${a.n?fm(a.sum/a.n):'—'}</td><td class="r" style="color:var(--faint)">${a.nKurs?a.nKurs+' × '+fm(a.kurs/a.nKurs)+' = '+fm(a.kurs):'—'}</td></tr>`;
+  let h='<div class="st" style="margin-top:32px">🏋️ Kitzingen · PF im Park · Medifox</div>';
+  h+='<div class="tc"><div class="thd"><h3>Nach Monat</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><span class="hdr-badge">ohne Kraft-Präventionskurs (120 €)</span><span class="hdr-badge">'+months.join(', ')+'</span></div></div>';
+  h+='<table><thead><tr><th>Monat</th><th class="r">Behandlungen</th><th class="r">Umsatz</th><th class="r">ø je Behandlung</th><th class="r">Präventionskurse (nicht enthalten)</th></tr></thead><tbody>';
+  monthNums.forEach(mi=>{const a=byM[mi];if(a)h+=z(MN[mi-1],a,false);});
+  h+=z('Summe',tot,true)+'</tbody></table></div>';
+  const tl=Object.keys(byT).map(n=>Object.assign({name:n},byT[n])).sort((a,b)=>b.sum-a.sum);
+  h+='<div class="tc"><div class="thd"><h3>Nach Mitarbeiter:in</h3><span class="hdr-badge">'+tl.length+' Personen</span></div>';
+  h+='<table><thead><tr><th>Mitarbeiter:in</th><th class="r">Behandlungen</th><th class="r">Umsatz</th><th class="r">ø je Behandlung</th><th class="r">Präventionskurse (nicht enthalten)</th></tr></thead><tbody>';
+  tl.forEach(t=>{h+=z(t.name,t,false);});
+  h+=z('Summe',tot,true)+'</tbody></table></div>';
+  const ll=Object.keys(byL).map(k=>({l:k,n:byL[k].n,sum:byL[k].sum})).sort((a,b)=>b.sum-a.sum);
+  h+='<div class="tc"><div class="thd"><h3>Nach Leistung</h3><span class="hdr-badge">'+ll.length+' Positionen</span></div>';
+  h+='<table><thead><tr><th>Leistung</th><th class="r">Behandlungen</th><th class="r">ø je Behandlung</th><th class="r">Umsatz</th></tr></thead><tbody>';
+  ll.slice(0,25).forEach(x=>{h+=`<tr><td style="white-space:normal;max-width:520px">${x.l}</td><td class="r">${x.n}</td><td class="r">${fm(x.sum/x.n)}</td><td class="r"><b>${fm(x.sum)}</b></td></tr>`;});
+  if(ll.length>25)h+=`<tr><td colspan="4" style="color:var(--faint)">… ${ll.length-25} weitere Positionen</td></tr>`;
+  h+='</tbody></table></div>';
+  return h;
 }
 // ═══ /THEVEA UMSATZ ══════════════════════════════════════════════════════════
 
@@ -2503,7 +2540,7 @@ function parseRaw(rows){
     const dv3=r[3];
     if(typeof dv3==='number'){durMin=Math.round(dv3*1440);}else{const durStr=String(dv3||'');const dm=durStr.match(/(\d{1,2}):(\d{2})/);if(dm)durMin=parseInt(dm[1])*60+parseInt(dm[2]);}
     const dateKey=dateObj?(dateObj.getUTCFullYear()+'-'+(dateObj.getUTCMonth()+1)+'-'+dateObj.getUTCDate()):null;
-    d.push({name:clean,month,week,price,billed,wd,startMin,durMin,dateKey});
+    d.push({name:clean,month,week,price,billed,wd,startMin,durMin,dateKey,leistung:String(r[6]||'').trim(),posNr:String(r[5]||'').trim()});
   }
   return d;
 }
