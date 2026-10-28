@@ -6,6 +6,7 @@
 const PAGES=[
   {id:'uebersicht',l:'Übersicht'},
   {id:'erbracht',l:'Erbracht'},
+  {id:'abgerechnet',l:'Abgerechnet'},
   {id:'vorschau',l:'Jahresvorschau'},
   {id:'planist',l:'Plan vs. Ist'},
   {id:'auslastung',l:'Auslastung'},
@@ -83,7 +84,7 @@ function rNav(){
 function rPage(){
   const el=document.getElementById('page');if(!el)return;
   const p=PAGES.find(x=>x.id===page)||PAGES[0];
-  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='vorschau'?pVorschau():p.id==='planist'?pPlanIst():p.id==='auslastung'?pAuslastung():p.id==='termine'?pTermine():p.id==='therapeuten'?pTherapeuten():pAlt(p);
+  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='abgerechnet'?pAbgerechnet():p.id==='vorschau'?pVorschau():p.id==='planist'?pPlanIst():p.id==='auslastung'?pAuslastung():p.id==='termine'?pTermine():p.id==='therapeuten'?pTherapeuten():pAlt(p);
   window.scrollTo({top:0});
 }
 function pAlt(p){
@@ -296,6 +297,105 @@ function pErbracht(){
   return h;
 }
 
+
+// ── Abgerechnet ──────────────────────────────────────────────────────────
+// KIMOJO: thevea-Statistik „Umsatz abgerechnete Verordnungen" (nach
+// Abrechnungsdatum, je Person, inkl. Privat/Beihilfe, mit Zuzahlung) plus die
+// thevea-Rechnungen (Privat-, Selbstzahler-, Ausfall-, Zuzahlungsrechnungen).
+// Kitzingen und KIMOJO vor dem Cutover: Medifox-Zeilen mit Kennzeichen
+// „Abgerechnet", nach Leistungsmonat; GKV/BG/Privat an der Positionsnummer,
+// Zuzahlung rechnerisch (10 % + 10 € je Rezept), weil Medifox sie nicht exportiert.
+const ABG_GKV_PREISE=new Set([29.63,35.59,35.97,53.94,71.94,55.81,16.16,8.63,22.78,13.09,47.06,27.46,36.61,8.43,13.47,21.63,31.52]);
+function abgMedifoxArt(r){
+  const p=String(r.posNr||'').trim(),l=String(r.leistung||'').toLowerCase();
+  if(/^ausfallrechnung/.test(l))return'ausfall';
+  if(/^x/i.test(p))return'gkv';
+  if(/\s[ab]$/i.test(p)||/^8\d{3}/.test(p))return'bg';
+  if(/^2\d{4}$/.test(p)&&ABG_GKV_PREISE.has(Math.round(r.price*100)/100))return'gkv';
+  return'privat';
+}
+function abgDaten(){
+  const months=getActiveMonths(),monthNums=months.map(m=>MN.indexOf(m)+1),jahr=new Date().getFullYear();
+  const M={},P={},RE={};
+  const mk=(o,k,init)=>o[k]||(o[k]=init());
+  const mAgg=(s,m)=>({standort:s,month:m,quelle:null,beh:0,brutto:0,gkv:0,bg:0,privat:0,privatN:0,ausfall:0,zuz:0,zuzEst:0,netto:0,offen:0,offenN:0,kalender:0});
+  const pAgg=(s,n)=>({standort:s,name:n,quelle:null,beh:0,brutto:0,zuz:0,zuzEst:false,netto:0,offen:0});
+  // thevea-Statistik
+  ((D.abg&&D.abg.rows)||[]).forEach(r=>{
+    if(r.jahr!==jahr||!monthNums.includes(r.month)||!matchS(r.standort))return;
+    const m=mk(M,r.standort+'|'+r.month,()=>mAgg(r.standort,r.month));m.quelle='thevea';m.beh+=r.beh;m.brutto+=r.brutto;m.gkv+=r.brutto;m.zuz+=r.zuzahlung;m.netto+=r.netto;
+    const p=mk(P,r.standort+'|'+r.name,()=>pAgg(r.standort,r.name));p.quelle='thevea';p.beh+=r.beh;p.brutto+=r.brutto;p.zuz+=r.zuzahlung;p.netto+=r.netto;
+  });
+  // thevea-Rechnungen: Privatanteil, Ausfallrechnungen, Zahlungseingang
+  ((D.re&&D.re.rows)||[]).forEach(r=>{
+    if(r.jahr!==jahr||!monthNums.includes(r.month)||!matchS(r.standort)||r.storno)return;
+    const x=mk(RE,r.art,()=>({art:r.art,artName:r.artName,n:0,betrag:0,bezahlt:0}));x.n++;x.betrag+=r.brutto;x.bezahlt+=r.bezahlt;
+    const m=mk(M,r.standort+'|'+r.month,()=>mAgg(r.standort,r.month));
+    if(r.art==='privat'||r.art==='selbstzahler'){const p=Math.min(r.brutto,Math.max(0,m.gkv));m.privat+=r.brutto;m.privatN++;m.gkv-=p;}
+    else if(r.art==='ausfall')m.ausfall+=r.brutto;
+  });
+  // Medifox (Kitzingen, KIMOJO vor dem Cutover)
+  const theraNames=new Set(D.ctrl.filter(t=>matchS(t.s)).map(t=>t.n));
+  const vos={};
+  D.raw.forEach(r=>{
+    if(r.src==='thevea'||!r.month||!monthNums.includes(r.month)||!tvRowPasst(r,theraNames)||tvIstKurs(r))return;
+    const s=rowSite(r),art=abgMedifoxArt(r);
+    const m=mk(M,s+'|'+r.month,()=>mAgg(s,r.month));m.quelle=m.quelle||'medifox';
+    const p=mk(P,s+'|'+r.name,()=>pAgg(s,r.name));p.quelle=p.quelle||'medifox';
+    if(!r.billed){if(art!=='ausfall'){m.offen+=r.price;m.offenN++;p.offen+=r.price;}return;}
+    if(art==='ausfall'){m.ausfall+=r.price;return;}
+    m.beh++;m.brutto+=r.price;m[art]+=r.price;if(art==='privat')m.privatN++;
+    p.beh++;p.brutto+=r.price;p.quelle='medifox';
+    if(art==='gkv'){const z=r.price*0.1;m.zuz+=z;m.zuzEst+=z;p.zuz+=z;p.zuzEst=true;const vk=s+'|'+r.month+'|'+r.name+'|'+(r.patient||'')+'|'+(r.vo||'');if(!vos[vk]){vos[vk]=1;m.zuz+=10;m.zuzEst+=10;p.zuz+=10;}}
+  });
+  Object.values(M).forEach(m=>{if(m.quelle==='medifox'){m.netto=m.brutto-m.zuz;}});
+  Object.values(P).forEach(p=>{if(p.quelle==='medifox')p.netto=p.brutto-p.zuz;});
+  // Kalenderwert (Seite Erbracht) für thevea-Monate als Bezugsgröße
+  erbrachtZeilen().forEach(r=>{const m=M[r.standort+'|'+r.month];if(m&&m.quelle==='thevea')m.kalender+=r.price;});
+  Object.values(M).forEach(m=>{if(m.quelle==='thevea'){m.offen=Math.max(0,m.kalender-m.brutto);}else{m.kalender=m.brutto+m.offen;}});
+  return{months,monthNums,M:Object.values(M),P:Object.values(P),RE:Object.values(RE)};
+}
+function pAbgerechnet(){
+  const {months,monthNums,M,P,RE}=abgDaten();
+  const sub=`${esc(zeitraumLabel())} · ${esc(sn(aS))}`;
+  if(!M.length)return`<section class="sec"><div class="sec-h"><h2>Abgerechnete Leistungen</h2><span class="sub">${sub}</span></div><div class="empty">Keine abgerechneten Leistungen im gewählten Zeitraum.</div></section>`;
+  const S=(arr,k)=>arr.reduce((t,x)=>t+(x[k]||0),0);
+  const oe=x=>n1(x)+' €';
+  const tot={beh:S(M,'beh'),brutto:S(M,'brutto'),gkv:S(M,'gkv'),bg:S(M,'bg'),privat:S(M,'privat'),privatN:S(M,'privatN'),ausfall:S(M,'ausfall'),zuz:S(M,'zuz'),zuzEst:S(M,'zuzEst'),netto:S(M,'netto'),offen:S(M,'offen'),kalender:S(M,'kalender')};
+  let standTxt='';{const st=(D.abg&&D.abg.stand)||{};const bis=Object.keys(st).filter(k=>matchS(k.split('|')[0])).map(k=>st[k].bis).filter(Boolean).sort().pop();if(bis)standTxt=' · thevea abgerechnet bis '+ausYmd(bis).toLocaleDateString('de-DE');}
+  let h=`<section class="sec"><div class="sec-h"><h2>Abgerechnete Leistungen</h2><span class="sub">${sub}${standTxt}</span></div><div class="grid">`;
+  h+=`<div class="kpi big"><div class="l">Abgerechnet brutto</div><div class="v">${eur0(tot.brutto)}</div><div class="s">${n0(tot.beh)} Behandlungen · ø <b>${oe(tot.beh?tot.brutto/tot.beh:0)}</b> je Behandlung</div></div>`;
+  h+=`<div class="kpi"><div class="l">Privatleistungen</div><div class="v">${eur0(tot.privat)}</div><div class="s">${n1(tot.brutto?tot.privat/tot.brutto*100:0)} % des Brutto · GKV/BG <b>${eur0(tot.gkv+tot.bg)}</b></div></div>`;
+  h+=`<div class="kpi"><div class="l">Zuzahlungen</div><div class="v">${eur0(tot.zuz)}</div><div class="s">Netto nach Zuzahlung <b>${eur0(tot.netto)}</b>${tot.zuzEst?` · davon ${eur0(tot.zuzEst)} rechnerisch (Medifox)`:''}</div></div>`;
+  const quote=tot.kalender>0?tot.brutto/tot.kalender*100:null;
+  h+=`<div class="kpi"><div class="l">Noch nicht abgerechnet</div><div class="v ${tot.offen>0?'c-a':'c-g'}">${eur0(tot.offen)}</div><div class="s">abgerechnet <b>${quote==null?'—':n0(quote)+' %'}</b> von ${eur0(tot.kalender)} erbracht</div></div>`;
+  h+='</div>';
+  // Nach Standort
+  const bySite={};M.forEach(m=>{const a=bySite[m.standort]||(bySite[m.standort]={standort:m.standort,beh:0,brutto:0,gkv:0,bg:0,privat:0,zuz:0,zuzEst:0,netto:0,ausfall:0,offen:0,kalender:0,quellen:new Set()});['beh','brutto','gkv','bg','privat','zuz','zuzEst','netto','ausfall','offen','kalender'].forEach(k=>a[k]+=m[k]);a.quellen.add(m.quelle);});
+  const sites=Object.values(bySite);
+  const qTag=q=>q.has('thevea')&&q.has('medifox')?'thevea + Medifox':q.has('thevea')?'thevea':'Medifox';
+  if(sites.length>1)h+='<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Standort</th><th>Quelle</th><th class="r">Beh.</th><th class="r">Brutto</th><th class="r">GKV / BG</th><th class="r">Privat</th><th class="r">Zuzahlung</th><th class="r">Netto</th><th class="r">Ausfall</th><th class="r">Offen</th></tr></thead><tbody>'+sites.map(a=>`<tr><td>${siteTag(a.standort)}</td><td class="c-m">${qTag(a.quellen)}</td><td class="r">${n0(a.beh)}</td><td class="r"><b>${eur0(a.brutto)}</b></td><td class="r">${eur0(a.gkv+a.bg)}</td><td class="r">${eur0(a.privat)}</td><td class="r">${eur0(a.zuz)}${a.zuzEst?'*':''}</td><td class="r">${eur0(a.netto)}</td><td class="r c-m">${eur0(a.ausfall)}</td><td class="r c-a">${eur0(a.offen)}</td></tr>`).join('')+'</tbody></table></div>';
+  h+=`<p class="hint">KIMOJO aus der thevea-Statistik „Umsatz abgerechnete Verordnungen“ nach Abrechnungsdatum (inklusive Privat- und Beihilferezepte, Zuzahlung laut thevea); der Privatanteil kommt aus den Privat- und Selbstzahlerrechnungen desselben Monats. Kitzingen und KIMOJO bis zum Cutover aus Medifox: Leistungen mit Kennzeichen „Abgerechnet“ nach Leistungsmonat, GKV/BG/Privat an der Positionsnummer; * Zuzahlung rechnerisch 10 % + 10 € je Rezept ohne Befreiungen, weil Medifox sie nicht exportiert. Ausfallrechnungen stehen neben dem Brutto, Club, T-RENA und Kurse sind ausgeklammert.</p></section>`;
+  // Nach Monat
+  const byM={};M.forEach(m=>{const a=byM[m.month]||(byM[m.month]={beh:0,brutto:0,gkv:0,bg:0,privat:0,zuz:0,zuzEst:0,netto:0,ausfall:0,offen:0,kalender:0});['beh','brutto','gkv','bg','privat','zuz','zuzEst','netto','ausfall','offen','kalender'].forEach(k=>a[k]+=m[k]);});
+  const zeile=(label,a,sum)=>{const q=a.kalender>0?a.brutto/a.kalender*100:null;return`<tr${sum?' class="sum"':''}><td>${esc(label)}</td><td class="r">${n0(a.beh)}</td><td class="r"><b>${eur0(a.brutto)}</b></td><td class="r">${eur0(a.gkv+a.bg)}</td><td class="r">${eur0(a.privat)}</td><td class="r">${eur0(a.zuz)}${a.zuzEst?'*':''}</td><td class="r">${eur0(a.netto)}</td><td class="r c-m">${eur0(a.ausfall)}</td><td class="r">${eur0(a.offen)}</td><td class="r">${q==null?'—':`<span class="pill ${q>=95?'p-g':q>=80?'p-a':'p-r'}">${n0(q)} %</span>`}</td></tr>`;};
+  h+=`<section class="sec"><div class="sec-h"><h2>Nach Monat</h2><span class="sub">thevea nach Abrechnungsdatum · Medifox nach Leistungsmonat</span></div><div class="tbl-wrap"><table><thead><tr><th>Monat</th><th class="r">Beh.</th><th class="r">Brutto</th><th class="r">GKV / BG</th><th class="r">Privat</th><th class="r">Zuzahlung</th><th class="r">Netto</th><th class="r">Ausfall</th><th class="r">Offen</th><th class="r">Quote</th></tr></thead><tbody>`;
+  monthNums.forEach(mi=>{const a=byM[mi];if(!a)return;h+=zeile(MN[mi-1],a,false);});
+  h+=zeile('Summe',tot,true)+'</tbody></table></div><p class="hint">Offen = erbrachter Kalenderwert, der noch nicht abgerechnet ist (KIMOJO: Kalenderwert der Seite Erbracht minus thevea-Abrechnung; Medifox: Leistungen ohne Kennzeichen „Abgerechnet“). Quote = abgerechnet ÷ erbracht; im laufenden Monat naturgemäß niedriger, weil viele Rezepte noch offen sind.</p></section>';
+  // Rechnungen & Zahlungseingang (thevea)
+  if(RE.length){
+    const ord={privat:1,selbstzahler:2,zuzahlung:3,ausfall:4,sonst:5};RE.sort((a,b)=>(ord[a.art]||9)-(ord[b.art]||9));
+    h+=`<section class="sec"><div class="sec-h"><h2>Rechnungen und Zahlungseingang</h2><span class="sub">thevea-Rechnungen nach Rechnungsdatum · KIMOJO</span></div><div class="tbl-wrap"><table><thead><tr><th>Rechnungsart</th><th class="r">Anzahl</th><th class="r">Betrag</th><th class="r">Bezahlt</th><th class="r">Offen</th><th style="min-width:110px"></th></tr></thead><tbody>`;
+    RE.forEach(x=>{const off=Math.max(0,x.betrag-x.bezahlt),pq=x.betrag>0?x.bezahlt/x.betrag*100:0;h+=`<tr><td><b>${esc(x.artName)}</b></td><td class="r">${n0(x.n)}</td><td class="r"><b>${eur0(x.betrag)}</b></td><td class="r c-g">${eur0(x.bezahlt)}</td><td class="r ${off>0?'c-a':'c-m'}">${eur0(off)}</td><td><div class="bar"><i style="width:${pq}%;background:var(--green)"></i></div></td></tr>`;});
+    h+='</tbody></table></div><p class="hint">Alle nicht stornierten Rechnungen des Zeitraums; „Offen“ = Rechnungsbetrag minus Zahlungseingang. Zuzahlungsrechnungen zeigen, wie viel der Zuzahlungen schon eingegangen ist.</p></section>';
+  }
+  // Nach Therapeut:in
+  const tl=P.filter(p=>p.brutto>0||p.offen>0).sort((a,b)=>b.brutto-a.brutto);const mx=Math.max(...tl.map(t=>t.brutto),1);
+  h+=`<section class="sec"><div class="sec-h"><h2>Nach Therapeut:in</h2><span class="sub">${tl.length} Personen · sortiert nach Brutto</span></div><div class="tbl-wrap"><table><thead><tr><th>Therapeut:in</th><th>Standort</th><th class="r">Beh.</th><th class="r">Brutto</th><th class="r">Zuzahlung</th><th class="r">Netto</th><th class="r">ø je Beh.</th><th class="r">Offen</th><th style="min-width:110px"></th></tr></thead><tbody>`;
+  tl.forEach(t=>{h+=`<tr><td><b>${esc(t.name)}</b></td><td>${siteTag(t.standort)}</td><td class="r">${n0(t.beh)}</td><td class="r"><b>${eur0(t.brutto)}</b></td><td class="r">${eur0(t.zuz)}${t.zuzEst?'*':''}</td><td class="r">${eur0(t.netto)}</td><td class="r">${oe(t.beh?t.brutto/t.beh:0)}</td><td class="r">${t.quelle==='medifox'?eur0(t.offen):'<span class="c-m">—</span>'}</td><td><div class="bar"><i style="width:${t.brutto/mx*100}%;background:${SITE_COL[t.standort]||'var(--blue)'}"></i></div></td></tr>`;});
+  h+='</tbody></table></div><p class="hint">KIMOJO je Person aus der thevea-Statistik (Privatanteil dort nicht je Person ausweisbar); Kitzingen je Person aus den Medifox-Zeilen mit Kennzeichen „Abgerechnet“, Offen = noch nicht abgerechnete Leistungen. Ergo-Nachnamen ergänzt der Weekly Tracker.</p></section>';
+  return h;
+}
 
 // ── Jahresvorschau ───────────────────────────────────────────────────────
 // Rollierende Planung: abgeschlossene Monate mit Ist (BWA), laufender und

@@ -665,6 +665,9 @@ async function loadAll(){
 
     lt.textContent='Lade thevea-Kalender...';
     try{await tvLaden();}catch(e){console.warn('thevea:',e);}
+    lt.textContent='Lade Abrechnung...';
+    try{await abgLaden();}catch(e){console.warn('Abgerechnet:',e);D.abg={rows:[],stand:{}};}
+    try{await reLaden();}catch(e){console.warn('Rechnungen:',e);D.re={rows:[],stand:{}};}
 
     lt.textContent='Verarbeite Planungen...';
     // Plan KIMOJO
@@ -2258,7 +2261,7 @@ function parseRaw(rows){
     const dv3=r[3];
     if(typeof dv3==='number'){durMin=Math.round(dv3*1440);}else{const durStr=String(dv3||'');const dm=durStr.match(/(\d{1,2}):(\d{2})/);if(dm)durMin=parseInt(dm[1])*60+parseInt(dm[2]);}
     const dateKey=dateObj?(dateObj.getUTCFullYear()+'-'+(dateObj.getUTCMonth()+1)+'-'+dateObj.getUTCDate()):null;
-    d.push({name:clean,month,week,price,billed,wd,startMin,durMin,dateKey,leistung:String(r[6]||'').trim(),posNr:String(r[5]||'').trim()});
+    d.push({name:clean,month,week,price,billed,wd,startMin,durMin,dateKey,leistung:String(r[6]||'').trim(),posNr:String(r[5]||'').trim(),patient:String(r[4]||'').trim(),vo:String(r[9]||'').trim()});
   }
   return d;
 }
@@ -2714,4 +2717,63 @@ function auslTag(ymd,site){
 function auslZeitraum(tage,site){
   let geb=0,anw=0;tage.forEach(ymd=>{const a=auslTag(ymd,site);if(a.pct===null)return;geb+=a.gebucht;anw+=a.anw;});
   return anw>0?geb/anw*100:null;
+}
+
+// ═══ THEVEA · ABGERECHNETE VERORDNUNGEN ══════════════════════════════════════
+// Die thevea-Statistik „Umsatz abgerechnete Verordnungen" je Mitarbeiter:in,
+// nach Abrechnungsdatum. „Thevea Physio Flow" und „Thevea Ergo Flow" schreiben
+// jede Nacht die letzten drei Monate als
+// Controlling/thevea/thevea-abgerechnet-<physio|ergo>-YYYY-MM.json
+// (Schleife „Abgerechnet je Monat", Aktionen HTTP Abgerechnet / Datei Abgerechnet).
+const ABG_DIR='/12_Code/Controlling/thevea/';
+const ABG_MONATE=14;
+const ABG_LOCS=[{standort:'KIMOJO Physio',pre:'thevea-abgerechnet-physio-'},{standort:'KIMOJO Ergo',pre:'thevea-abgerechnet-ergo-'}];
+async function abgLaden(){
+  const j=new Date(),monate=[];
+  for(let i=ABG_MONATE-1;i>=0;i--){const d=new Date(j.getFullYear(),j.getMonth()-i,1);monate.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'));}
+  const L=f=>loadJSONPfad(f).catch(()=>null);
+  const rows=[],stand={};
+  for(const loc of ABG_LOCS){
+    const files=await Promise.all(monate.map(m=>L(ABG_DIR+loc.pre+m+'.json')));
+    files.forEach((f,i)=>{
+      const s=f&&f.data&&f.data.umsatzstatistikMitarbeiterAbgerechneteVerordnungen,nodes=s&&s.nodes;
+      if(!nodes)return;
+      const ym=monate[i],p=ym.split('-');
+      stand[loc.standort+'|'+ym]={stand:f.stand||'',bis:(f.zeitraum&&f.zeitraum.bis)||''};
+      nodes.forEach(n=>{
+        const beh=+n.anzahlBehandlungen||0,brutto=parseFloat(n.umsatzBrutto)||0;
+        if(!beh&&!brutto)return;
+        let name;try{name=tvKanon(n.vorname,n.nachname,D.ctrl);}catch(e){name=String(n.nachname||'').trim()+', '+String(n.vorname||'').trim();}
+        rows.push({standort:loc.standort,ym,jahr:+p[0],month:+p[1],personId:n.personId,name,beh,brutto,zuzahlung:parseFloat(n.zuzahlung)||0,netto:parseFloat(n.umsatzNetto)||0});
+      });
+    });
+  }
+  D.abg={rows,stand};
+  return D.abg;
+}
+
+// ═══ THEVEA · RECHNUNGEN (PRIVAT, ZUZAHLUNG, AUSFALL) ════════════════════════
+// Rechnungsübersicht aus thevea (alle Rechnungen des Kontos), je Nacht komplett
+// als Controlling/thevea/thevea-rechnungen-<physio|ergo>.json (Aktionen
+// HTTP Rechnungen / Datei Rechnungen). Privat- und Selbstzahlerrechnungen sind
+// der Privatanteil der abgerechneten Verordnungen, Zuzahlungsrechnungen zeigen
+// den Zahlungseingang der Zuzahlungen.
+const RE_LOCS=[{standort:'KIMOJO Physio',datei:'thevea-rechnungen-physio.json'},{standort:'KIMOJO Ergo',datei:'thevea-rechnungen-ergo.json'}];
+const RE_ART={Zuzahlungsrechnung:'zuzahlung',Privatrechnung:'privat',Selbstzahlerrechnung:'selbstzahler',Ausfallrechnung:'ausfall'};
+async function reLaden(){
+  const L=f=>loadJSONPfad(f).catch(()=>null);
+  const rows=[],stand={};
+  for(const loc of RE_LOCS){
+    const f=await L(ABG_DIR+loc.datei);
+    const nodes=f&&f.data&&f.data.rechnungUebersicht&&f.data.rechnungUebersicht.nodes;
+    if(!nodes)continue;
+    stand[loc.standort]=f.stand||'';
+    nodes.forEach(n=>{
+      const d=String(n.rechnungsdatum||'').slice(0,10),p=d.split('-');
+      if(p.length<3)return;
+      rows.push({standort:loc.standort,datum:d,ym:d.slice(0,7),jahr:+p[0],month:+p[1],art:RE_ART[n.rechnungsart]||'sonst',artName:n.rechnungsart||'',status:n.rechnungsstatus||'',storno:/Storn|Ausgeb/.test(n.rechnungsstatus||''),brutto:parseFloat(n.gesamtbetragBrutto)||0,bezahlt:parseFloat(n.zahlungsbetrag)||0,nr:n.rechnungsnummer||''});
+    });
+  }
+  D.re={rows,stand};
+  return D.re;
 }
