@@ -706,7 +706,7 @@ async function loadAll(){
 
     // Rechnungsübersicht
     const rechnungenData=await rechnungenP;
-    D.rechnungen={total:0,count:0,byType:{},byPrefix:{}};
+    D.rechnungen=rechnungenAgg(rechnungenData);if(false){
     if(rechnungenData&&rechnungenData.length>1){
       for(let i=1;i<rechnungenData.length;i++){
         const r=rechnungenData[i];if(!r)continue;
@@ -721,7 +721,7 @@ async function loadAll(){
         if(!D.rechnungen.byPrefix[prefix])D.rechnungen.byPrefix[prefix]={count:0,saldo:0};
         D.rechnungen.byPrefix[prefix].count++;D.rechnungen.byPrefix[prefix].saldo+=saldo;
       }
-      console.log('Rechnungen loaded:',D.rechnungen.count,'offen, Summe:',D.rechnungen.total.toFixed(2));
+      }console.log('Rechnungen loaded:',D.rechnungen.count,'offen, Summe:',D.rechnungen.total.toFixed(2));
     }
 
     // Krankenstand
@@ -2118,7 +2118,7 @@ async function loadBank(fileId){
     const sheets=await getSheetNames(fileId);
     if(sheets&&sheets.length>0){
       const data=await getSheet(fileId,sheets[0]);
-      if(data&&data.length>1)return parseBankXLSX(data);
+      if(data&&data.length>1){const m=parseBankXLSX(data);try{Object.defineProperty(m,'voll',{value:bankVoll(data),enumerable:false});}catch(e){console.warn('Bank voll:',e);}return m;}
     }
   }catch(e){console.log('Bank XLSX failed, trying CSV...',e);}
   try{
@@ -2799,4 +2799,66 @@ function bwaVoll(rows){
     if(!code&&name&&cur&&(num(r[3])!==0||num(r[4])!==0)&&!/ohne konto-zuordnung/i.test(name))cur.items.push({konto,n:name,ist:num(r[3]),plan:num(r[4])});
   }
   return{z,kat,umsatz};
+}
+
+// ═══ BANK · BUCHUNGEN NACH HERKUNFT UND VERWENDUNG ═══════════════════════════
+// Kontoauszug-Export (VR-Bank) je Betrieb: Buchungstag, Name Zahlungsbeteiligter,
+// Buchungstext, Verwendungszweck, Betrag, Saldo nach Buchung. loadBank hängt das
+// Ergebnis als nicht aufzählbares Feld `voll` an die Monatswerte.
+const BANK_EIN=[
+  ['kassen','Krankenkassen und Abrechnungszentren',/krankenkasse|\baok\b|barmer|\bdak\b|techniker|davaso|abrechnungszentrum|iqvia|\bbkk\b|knappschaft|\bikk\b|\bkkh\b|\bhkk\b|\bsbk\b|gkv|big direkt|sozialversicherung|viactiv|pronova|salus|novitas|mhplus|debeka|opta data|noventi|\bazh\b|\brzh\b|optica|\bdzh\b|kubus/i],
+  ['bg','Berufsgenossenschaften und Unfallkassen',/berufsgenossenschaft|\bbg\b|\bvbg\b|unfallkasse|bghw|\bbgn\b|bgw/i],
+  ['karte','Karten- und Onlinezahlungen',/stripe|sumup|paypal|concardis|payone|zettle|girocard|mollie/i],
+  ['finanzamt','Finanzamt und Erstattungen',/finanzamt|finanzkasse|bundeskasse|hauptzollamt/i],
+  ['intern','Gesellschafter und interne Umbuchungen',/br[äa]tz|physio und fitness im park|kimojo gmbh|fyzo/i],
+  ['sonst','Patienten und Sonstige',/./]
+];
+const BANK_AUS=[
+  ['gehalt','Löhne und Gehälter',(n,bt,vz)=>/sammel/i.test(bt)||/lohn|gehalt|gehälter|verdienst/i.test(vz)||/lohn|gehalt/i.test(n)],
+  ['sv','Sozialversicherung',(n,bt,vz)=>/krankenkasse|\baok\b|barmer|techniker|\bbkk\b|\bdak\b|knappschaft|\bikk\b|\bkkh\b|\bhkk\b|minijob|rentenversicherung|berufsgenossenschaft|\bvbg\b|\bsbk\b|debeka bkk|energie-bkk|bahn-bkk/i.test(n)],
+  ['steuern','Steuern',(n,bt,vz)=>/finanzamt|finanzkasse|hauptzollamt/i.test(n)||/gewerbesteuer|umsatzsteuer|lohnsteuer|körperschaftsteuer/i.test(vz)],
+  ['miete','Miete und Nebenkosten',(n,bt,vz)=>/miete|pacht|nebenkosten/i.test(vz)||/immler|vermiet|hausverwaltung|stadtwerke|energie|strom|gas\b/i.test(n)],
+  ['darlehen','Darlehen, Leasing und Zinsen',(n,bt,vz)=>/darlehen|tilgung|kredit|leasing|zins/i.test(n+' '+bt+' '+vz)],
+  ['invest','Investitionen und Geräte',(n,bt,vz)=>/technogym|proxomed|gym80|medizintechnik|physiomed|zimmer medizin|ergo-fit|milon/i.test(n)],
+  ['intern','Gesellschafter und interne Umbuchungen',(n,bt,vz)=>/br[äa]tz|physio und fitness im park|kimojo gmbh|fyzo/i.test(n)],
+  ['bank','Bankgebühren',(n,bt,vz)=>/abschluss|entgelt|gebühr/i.test(bt+' '+vz)&&!n],
+  ['sonst','Lieferanten und Sonstige',()=>true]
+];
+function bankVoll(rows){
+  const MNB=['','Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+  const hdr=rows[0]||[];const col=re=>{for(let c=0;c<hdr.length;c++)if(re.test(String(hdr[c]||'').toLowerCase()))return c;return -1;};
+  let cD=col(/buchungstag/),cN=col(/name zahlungsbeteiligter/),cT=col(/buchungstext/),cV=col(/verwendungszweck/),cB=col(/^betrag$/),cS=col(/saldo/),cI=col(/iban auftragskonto/);
+  if(cD<0)cD=4;if(cN<0)cN=6;if(cT<0)cT=9;if(cV<0)cV=10;if(cB<0)cB=11;if(cS<0)cS=13;
+  const num=v=>{if(v==null||v==='')return NaN;if(typeof v==='number')return v;const s=String(v);return parseFloat(/,\d{1,2}$/.test(s)?s.replace(/\./g,'').replace(',','.'):s);};
+  const datum=v=>{if(typeof v==='number'&&v>40000)return new Date(Math.round((v-25569)*86400000));const s=String(v||'');let m=s.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);if(m)return new Date(Date.UTC(+m[3],+m[2]-1,+m[1]));m=s.match(/(\d{4})-(\d{2})-(\d{2})/);if(m)return new Date(Date.UTC(+m[1],+m[2]-1,+m[3]));const n=parseFloat(s);if(n>40000)return new Date(Math.round((n-25569)*86400000));return null;};
+  const out={monate:{},von:null,bis:null,iban:'',kat:{ein:{},aus:{}},partner:{ein:{},aus:{}}};
+  for(let i=1;i<rows.length;i++){
+    const r=rows[i];if(!r)continue;const d=datum(r[cD]);if(!d)continue;const b=num(r[cB]);if(isNaN(b))continue;
+    if(!out.iban&&r[cI])out.iban=String(r[cI]);
+    if(!out.von||d<out.von)out.von=d;if(!out.bis||d>out.bis)out.bis=d;
+    const mn=MNB[d.getUTCMonth()+1],jahr=d.getUTCFullYear();
+    const m=out.monate[mn]||(out.monate[mn]={jahr,ein:0,aus:0,saldo:null,saldoDatum:null,kat:{ein:{},aus:{}}});
+    const n=String(r[cN]||'').trim(),bt=String(r[cT]||'').trim(),vz=String(r[cV]||'').trim();
+    let k;if(b>0){k=(BANK_EIN.find(x=>x[2].test(n))||BANK_EIN[BANK_EIN.length-1])[0];m.ein+=b;}else{k=(BANK_AUS.find(x=>x[2](n,bt,vz))||BANK_AUS[BANK_AUS.length-1])[0];m.aus+=b;}
+    const side=b>0?'ein':'aus';m.kat[side][k]=(m.kat[side][k]||0)+b;out.kat[side][k]=(out.kat[side][k]||0)+b;
+    const pn=n||(/sammel/i.test(bt)?'Sammelüberweisung (Gehälter)':bt||'ohne Namen');out.partner[side][pn]=(out.partner[side][pn]||0)+b;
+    const s=num(r[cS]);if(!isNaN(s)&&(!m.saldoDatum||d>=m.saldoDatum)){m.saldo=s;m.saldoDatum=d;}
+  }
+  return out;
+}
+// Medifox-Rechnungsübersicht: Rechnungsnummern mit „K-“ gehören zu Kitzingen
+// (sie gehen auf dem PF-im-Park-Konto ein), Nummern ohne Präfix zu KIMOJO.
+function rechnungenAgg(rows){
+  const R={total:0,count:0,byType:{},byPrefix:{},byPT:{},rows:[]};
+  if(!rows||rows.length<2)return R;
+  for(let i=1;i<rows.length;i++){
+    const r=rows[i];if(!r)continue;const saldo=parseFloat(r[17])||0;if(!saldo)continue;
+    const typ=String(r[6]||'Unbekannt'),nr=String(r[0]||''),prefix=nr.startsWith('K-')?'PHFIP':'KIMOJO';
+    R.total+=saldo;R.count++;
+    (R.byType[typ]=R.byType[typ]||{count:0,saldo:0}).count++;R.byType[typ].saldo+=saldo;
+    (R.byPrefix[prefix]=R.byPrefix[prefix]||{count:0,saldo:0}).count++;R.byPrefix[prefix].saldo+=saldo;
+    const k=prefix+'|'+typ;(R.byPT[k]=R.byPT[k]||{prefix,typ,count:0,saldo:0}).count++;R.byPT[k].saldo+=saldo;
+    R.rows.push({nr,typ,prefix,saldo,datum:String(r[2]||''),kt:String(r[5]||'')});
+  }
+  return R;
 }

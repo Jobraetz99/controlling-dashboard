@@ -14,8 +14,8 @@ const PAGES=[
   {id:'therapeuten',l:'Therapeuten'},
   {id:'krankenstand',l:'Krankenstand'},
   {id:'bwa',l:'BWA'},
-  {id:'cashflow',l:'Cashflow',alt:true},
-  {id:'liquiditaet',l:'Liquidität',alt:true}
+  {id:'cashflow',l:'Cashflow'},
+  {id:'liquiditaet',l:'Liquidität'}
 ];
 aM='AKTUELL';// Standard: laufender Monat eingeschlossen
 let page=(location.hash||'#uebersicht').slice(1);
@@ -84,7 +84,7 @@ function rNav(){
 function rPage(){
   const el=document.getElementById('page');if(!el)return;
   const p=PAGES.find(x=>x.id===page)||PAGES[0];
-  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='abgerechnet'?pAbgerechnet():p.id==='vorschau'?pVorschau():p.id==='planist'?pPlanIst():p.id==='auslastung'?pAuslastung():p.id==='termine'?pTermine():p.id==='therapeuten'?pTherapeuten():p.id==='krankenstand'?pKrankenstand():p.id==='bwa'?pBwa():pAlt(p);
+  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='abgerechnet'?pAbgerechnet():p.id==='vorschau'?pVorschau():p.id==='planist'?pPlanIst():p.id==='auslastung'?pAuslastung():p.id==='termine'?pTermine():p.id==='therapeuten'?pTherapeuten():p.id==='krankenstand'?pKrankenstand():p.id==='bwa'?pBwa():p.id==='cashflow'?pCashflow():p.id==='liquiditaet'?pLiquiditaet():pAlt(p);
   window.scrollTo({top:0});
 }
 function pAlt(p){
@@ -553,6 +553,128 @@ function pBwa(){
     }
     h+='</section>';
   });
+  return h;
+}
+
+// ── Cashflow ─────────────────────────────────────────────────────────────
+// Kontoauszüge je Betrieb (D.bankK/D.bankP aus KIMOJO Bank.xlsx / PHFIP Bank.xlsx,
+// Monatswerte plus `voll` aus bankVoll: Herkunft der Einzahlungen, Verwendung
+// der Auszahlungen, Saldo je Monatsende).
+const BANK_ENT=[{k:'bankK',l:'KIMOJO GmbH',pre:'KIMOJO',sites:['KIMOJO Physio','KIMOJO Ergo'],col:'var(--primary)'},{k:'bankP',l:'PF im Park',pre:'PHFIP',sites:['PF im Park'],col:'var(--teal)'}];
+const fDatU=d=>d?new Date(d).toLocaleDateString('de-DE',{timeZone:'UTC'}):'—';
+const katName=(side,k)=>{const l=(side==='ein'?BANK_EIN:BANK_AUS).find(x=>x[0]===k);return l?l[1]:k;};
+function bankDaten(months){
+  return BANK_ENT.filter(e=>e.sites.some(s=>matchS(s))).map(e=>{
+    const b=D[e.k]||{},v=b.voll,ms=months.filter(m=>b[m]);
+    const agg={ein:0,aus:0,kat:{ein:{},aus:{}}};
+    ms.forEach(m=>{const x=b[m];agg.ein+=x.ein;agg.aus+=x.aus;const vm=v&&v.monate[m];if(vm)['ein','aus'].forEach(sd=>Object.entries(vm.kat[sd]).forEach(([k,val])=>{agg.kat[sd][k]=(agg.kat[sd][k]||0)+val;}));});
+    const last=ms.length?ms[ms.length-1]:null;
+    return{e,b,v,ms,agg,last,saldo:last?b[last].saldo:null,saldoDatum:v&&last&&v.monate[last]?v.monate[last].saldoDatum:null};
+  });
+}
+function linienChart(labels,series){
+  const n=labels.length;if(n<2)return'';
+  const W=720,H=180,pd={t:14,r:16,b:24,l:64},cw=W-pd.l-pd.r,ch=H-pd.t-pd.b;
+  const all=series.flatMap(s=>s.vals.filter(v=>v!=null));if(!all.length)return'';
+  let mn=Math.min(0,...all),mx=Math.max(...all);if(mx===mn)mx=mn+1;
+  const x=i=>pd.l+i/(n-1)*cw,y=v=>pd.t+(1-(v-mn)/(mx-mn))*ch;
+  let h=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;font-family:${SVGF}">`;
+  for(let i=0;i<=4;i++){const v=mn+(mx-mn)*i/4,yy=y(v);h+=`<line x1="${pd.l}" x2="${W-pd.r}" y1="${yy}" y2="${yy}" stroke="var(--border)" stroke-width="1"/><text x="${pd.l-6}" y="${yy+4}" text-anchor="end" font-size="10" fill="var(--faint)">${fmK(v)}</text>`;}
+  if(mn<0)h+=`<line x1="${pd.l}" x2="${W-pd.r}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-width="1"/>`;
+  labels.forEach((l,i)=>{h+=`<text x="${x(i)}" y="${H-6}" text-anchor="middle" font-size="10" fill="var(--muted)">${esc(l)}</text>`;});
+  series.forEach(s=>{const pts=s.vals.map((v,i)=>v==null?null:[x(i),y(v)]).filter(Boolean);if(pts.length<2)return;h+=`<polyline points="${pts.map(p=>p.join(',')).join(' ')}" fill="none" stroke="${s.col}" stroke-width="2.5" stroke-linejoin="round"/>`;pts.forEach(p=>{h+=`<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="${s.col}"/>`;});});
+  return h+'</svg>';
+}
+function pCashflow(){
+  const months=getActiveMonths(),data=bankDaten(months);
+  const sub=`${esc(zeitraumLabel())} · ${esc(sn(aS))}`;
+  if(!data.some(x=>x.ms.length))return`<section class="sec"><div class="sec-h"><h2>Cashflow</h2><span class="sub">${sub}</span></div><div class="empty">Für den gewählten Zeitraum liegen keine Kontoauszüge vor.</div></section>`;
+  const S=k=>data.reduce((t,x)=>t+x.agg[k],0);const ein=S('ein'),aus=S('aus'),netto=ein+aus;
+  const saldo=data.reduce((t,x)=>t+(x.saldo||0),0);const stand=data.map(x=>x.saldoDatum).filter(Boolean).sort((a,b)=>b-a)[0];
+  const bis=data.map(x=>x.v&&x.v.bis).filter(Boolean).sort((a,b)=>b-a)[0];
+  let h=`<section class="sec"><div class="sec-h"><h2>Cashflow</h2><span class="sub">${sub}${bis?' · Buchungen bis '+fDatU(bis):''}</span></div><div class="grid">`;
+  h+=`<div class="kpi big"><div class="l">Netto-Cashflow</div><div class="v ${netto>=0?'c-g':'c-r'}">${(netto>=0?'+':'')+eur0(netto)}</div><div class="s">Einzahlungen minus Auszahlungen im Zeitraum</div></div>`;
+  h+=`<div class="kpi"><div class="l">Einzahlungen</div><div class="v c-g">${eur0(ein)}</div><div class="s">davon Kassen und Abrechnungszentren <b>${eur0(data.reduce((t,x)=>t+(x.agg.kat.ein.kassen||0),0))}</b></div></div>`;
+  h+=`<div class="kpi"><div class="l">Auszahlungen</div><div class="v c-r">${eur0(aus)}</div><div class="s">davon Löhne und Gehälter <b>${eur0(data.reduce((t,x)=>t+(x.agg.kat.aus.gehalt||0),0))}</b></div></div>`;
+  h+=`<div class="kpi"><div class="l">Kontostand</div><div class="v">${eur0(saldo)}</div><div class="s">${stand?'Stand '+fDatU(stand):'letzter Monat im Zeitraum'} · ${data.length>1?'beide Konten':esc(data[0].e.l)}</div></div>`;
+  h+='</div>';
+  if(data.length>1)h+='<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Betrieb</th><th>Monate</th><th class="r">Einzahlungen</th><th class="r">Auszahlungen</th><th class="r">Netto</th><th class="r">Kontostand</th><th>Stand</th></tr></thead><tbody>'+data.map(x=>`<tr><td><span class="site"><span class="dot" style="background:${x.e.col}"></span>${esc(x.e.l)}</span></td><td class="c-m">${x.ms.length?x.ms[0]+(x.ms.length>1?' – '+x.ms[x.ms.length-1]:''):'—'}</td><td class="r c-g">${eur0(x.agg.ein)}</td><td class="r c-r">${eur0(x.agg.aus)}</td><td class="r ${x.agg.ein+x.agg.aus>=0?'c-g':'c-r'}"><b>${eur0(x.agg.ein+x.agg.aus)}</b></td><td class="r"><b>${x.saldo==null?'—':eur0(x.saldo)}</b></td><td class="c-m">${fDatU(x.saldoDatum)}</td></tr>`).join('')+'</tbody></table></div>';
+  // Saldo-Verlauf
+  const lab=months.filter(m=>data.some(x=>x.b[m]));
+  if(lab.length>1)h+='<div style="margin-top:14px">'+linienChart(lab,data.map(x=>({col:x.e.col,vals:lab.map(m=>x.b[m]?x.b[m].saldo:null)})))+'</div><p class="hint">Kontostand am letzten Buchungstag des Monats je Konto.</p>';
+  h+=`<p class="hint">Quelle: Kontoauszug-Exporte der VR-Bank (KIMOJO Bank.xlsx, PHFIP Bank.xlsx), manuell abgelegt – der Stand entspricht dem letzten Buchungstag im Export. Einzahlungen und Auszahlungen sind nach Zahlungsbeteiligtem und Verwendungszweck zugeordnet; interne Umbuchungen zwischen den Konten und Gesellschaftern stehen gesondert.</p></section>`;
+  data.forEach(x=>{
+    if(!x.ms.length)return;
+    h+=`<section class="sec"><div class="sec-h"><h2><span class="site"><span class="dot" style="background:${x.e.col}"></span>${esc(x.e.l)}</span></h2><span class="sub">${x.v&&x.v.iban?'IBAN …'+esc(String(x.v.iban).slice(-6))+' · ':''}${x.ms.length} Monat${x.ms.length>1?'e':''}</span></div>`;
+    h+='<div class="tbl-wrap"><table><thead><tr><th>Monat</th><th class="r">Einzahlungen</th><th class="r">Auszahlungen</th><th class="r">Netto</th><th class="r">Kontostand Ende</th></tr></thead><tbody>';
+    x.ms.forEach(m=>{const d=x.b[m];h+=`<tr><td>${m}</td><td class="r c-g">${eur0(d.ein)}</td><td class="r c-r">${eur0(d.aus)}</td><td class="r ${d.ein+d.aus>=0?'c-g':'c-r'}"><b>${eur0(d.ein+d.aus)}</b></td><td class="r">${eur0(d.saldo)}</td></tr>`;});
+    h+=`<tr class="sum"><td>Summe</td><td class="r c-g">${eur0(x.agg.ein)}</td><td class="r c-r">${eur0(x.agg.aus)}</td><td class="r ${x.agg.ein+x.agg.aus>=0?'c-g':'c-r'}">${eur0(x.agg.ein+x.agg.aus)}</td><td class="r">${x.saldo==null?'—':eur0(x.saldo)}</td></tr></tbody></table></div>`;
+    if(x.v){
+      const tab=(side,title,col)=>{const ent=Object.entries(x.agg.kat[side]).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));const tot=ent.reduce((t,e)=>t+e[1],0);const mx=Math.max(...ent.map(e=>Math.abs(e[1])),1);return`<div><div class="sec-h" style="margin:14px 0 8px"><h2 style="font-size:14px">${title}</h2></div><div class="tbl-wrap"><table style="min-width:0"><tbody>${ent.map(([k,v])=>`<tr><td>${esc(katName(side,k))}</td><td class="r"><b>${eur0(v)}</b></td><td class="r c-m">${tot?n0(v/tot*100)+' %':''}</td><td style="min-width:90px"><div class="bar"><i style="width:${Math.abs(v)/mx*100}%;background:${col}"></i></div></td></tr>`).join('')}</tbody></table></div></div>`;};
+      h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">'+tab('ein','Woher kommt das Geld','var(--green)')+tab('aus','Wohin geht das Geld','var(--red)')+'</div>';
+      const top=(side,title)=>{const ent=Object.entries(x.v.partner[side]).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).slice(0,8);return`<div><div class="sec-h" style="margin:14px 0 8px"><h2 style="font-size:14px">${title}</h2><span class="sub">gesamter Export ${fDatU(x.v.von)} – ${fDatU(x.v.bis)}</span></div><div class="tbl-wrap"><table style="min-width:0"><tbody>${ent.map(([n,v])=>`<tr><td>${esc(n)}</td><td class="r"><b>${eur0(v)}</b></td></tr>`).join('')}</tbody></table></div></div>`;};
+      h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">'+top('ein','Größte Zahler')+top('aus','Größte Empfänger')+'</div>';
+    }
+    h+='</section>';
+  });
+  return h;
+}
+
+// ── Liquidität ───────────────────────────────────────────────────────────
+// Drei Stufen: Bankguthaben (letzter Kontostand), plus offene Forderungen
+// (Medifox-Rechnungsübersicht nach Kostenträgertyp, thevea-Rechnungen Privat,
+// Zuzahlung, Ausfall), plus erbrachte, noch nicht abgerechnete Leistungen
+// (Medifox-Zeilen ohne „Abgerechnet", KIMOJO Kalenderwert minus thevea-Abrechnung).
+function liqOffen(){
+  const h0=ymdP(heute()),out={};
+  const theraNames=new Set(D.ctrl.filter(t=>matchS(t.s)).map(t=>t.n));
+  const pad=k=>{const p=String(k).split('-');return p.length===3?p[0]+'-'+String(p[1]).padStart(2,'0')+'-'+String(p[2]).padStart(2,'0'):k;};
+  const erb={};
+  D.raw.forEach(r=>{
+    if(!tvRowPasst(r,theraNames)||tvIstKurs(r))return;const s=rowSite(r);
+    if(r.src==='thevea'){if(r.kind==='ausfall'||r.kind==='reserviert'||!r.datum||ymdP(r.datum)>h0)return;erb[s]=(erb[s]||0)+r.price;return;}
+    if(r.billed||abgMedifoxArt(r)==='ausfall'||!r.dateKey||pad(r.dateKey)>h0)return;
+    const o=out[s]||(out[s]={offen:0,n:0,quelle:'Medifox ohne Kennzeichen „Abgerechnet“'});o.offen+=r.price;o.n++;
+  });
+  Object.keys(erb).forEach(s=>{const abg=((D.abg&&D.abg.rows)||[]).filter(r=>r.standort===s).reduce((t,r)=>t+r.brutto,0);const o=out[s]||(out[s]={offen:0,n:0,quelle:''});o.offen+=Math.max(0,erb[s]-abg);o.quelle=(o.quelle?o.quelle+' · ':'')+'thevea: Kalenderwert seit Cutover minus Abrechnung';});
+  return out;
+}
+function pLiquiditaet(){
+  const ents=BANK_ENT.filter(e=>e.sites.some(s=>matchS(s)));
+  // Stufe 1: Bank, letzter vorhandener Kontostand
+  const bank=ents.map(e=>{const b=D[e.k]||{};const ms=MN.filter(m=>b[m]);const last=ms.length?ms[ms.length-1]:null;return{e,saldo:last?b[last].saldo:0,last,datum:b.voll&&last&&b.voll.monate[last]?b.voll.monate[last].saldoDatum:null};});
+  const bankSum=bank.reduce((t,x)=>t+x.saldo,0);const bankStand=bank.map(x=>x.datum).filter(Boolean).sort((a,b)=>b-a)[0];
+  // Stufe 2: Forderungen
+  const R=D.rechnungen||{byPT:{}};const pts=Object.values(R.byPT||{}).filter(x=>ents.some(e=>e.pre===x.prefix));
+  const medifoxFord=pts.reduce((t,x)=>t+x.saldo,0),medifoxN=pts.reduce((t,x)=>t+x.count,0);
+  const reOffen={};((D.re&&D.re.rows)||[]).forEach(r=>{if(r.storno||!matchS(r.standort))return;const off=r.brutto-r.bezahlt;if(off<=0.005)return;const a=reOffen[r.artName]||(reOffen[r.artName]={n:0,offen:0});a.n++;a.offen+=off;});
+  const theveaFord=Object.values(reOffen).reduce((t,x)=>t+x.offen,0),theveaN=Object.values(reOffen).reduce((t,x)=>t+x.n,0);
+  const ford=medifoxFord+theveaFord;
+  // Stufe 3: Unabgerechnet
+  const off=liqOffen();const offSum=Object.values(off).reduce((t,x)=>t+x.offen,0);
+  const total=bankSum+ford+offSum;
+  const pct=v=>total>0?Math.max(0,v)/total*100:0;
+  const sub=`${esc(sn(aS))} · Stichtag heute${bankStand?' · Kontostand vom '+fDatU(bankStand):''}`;
+  let h=`<section class="sec"><div class="sec-h"><h2>Liquidität</h2><span class="sub">${sub}</span></div><div class="grid">`;
+  h+=`<div class="kpi big"><div class="l">Liquidität gesamt</div><div class="v">${eur0(total)}</div><div class="s">Bank + offene Forderungen + unabgerechnete Leistungen</div></div>`;
+  h+=`<div class="kpi"><div class="l">I · Bankguthaben</div><div class="v c-g">${eur0(bankSum)}</div><div class="s">sofort verfügbar · ${bankStand?'Stand '+fDatU(bankStand):'kein Kontoauszug'}</div></div>`;
+  h+=`<div class="kpi"><div class="l">II · Offene Forderungen</div><div class="v" style="color:var(--blue)">${eur0(ford)}</div><div class="s">${n0(medifoxN+theveaN)} Rechnungen gestellt, noch nicht bezahlt</div></div>`;
+  h+=`<div class="kpi"><div class="l">III · Unabgerechnet</div><div class="v c-a">${eur0(offSum)}</div><div class="s">erbracht, aber noch keine Rechnung</div></div>`;
+  h+='</div>';
+  h+=`<div style="display:flex;height:12px;border-radius:6px;overflow:hidden;margin-top:14px;background:var(--fill)"><div style="width:${pct(bankSum)}%;background:var(--green)"></div><div style="width:${pct(ford)}%;background:var(--blue)"></div><div style="width:${pct(offSum)}%;background:var(--amber)"></div></div>`;
+  h+=`<div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted)"><span><span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green)"></span> Bank ${n0(pct(bankSum))} %</span><span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--blue)"></span> Forderungen ${n0(pct(ford))} %</span><span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--amber)"></span> Unabgerechnet ${n0(pct(offSum))} %</span></div>`;
+  h+='</section>';
+  // I Bank
+  h+=`<section class="sec"><div class="sec-h"><h2>I · Bankguthaben</h2><span class="sub">letzter Kontostand je Konto</span></div><div class="tbl-wrap"><table><thead><tr><th>Konto</th><th class="r">Kontostand</th><th>Stand</th></tr></thead><tbody>${bank.map(x=>`<tr><td><span class="site"><span class="dot" style="background:${x.e.col}"></span>${esc(x.e.l)}</span></td><td class="r"><b>${eur0(x.saldo)}</b></td><td class="c-m">${x.datum?fDatU(x.datum):(x.last?'Ende '+x.last:'kein Export')}</td></tr>`).join('')}<tr class="sum"><td>Summe</td><td class="r">${eur0(bankSum)}</td><td></td></tr></tbody></table></div><p class="hint">Aus den Kontoauszug-Exporten; liegt der Export zurück, ist der Kontostand entsprechend alt.</p></section>`;
+  // II Forderungen
+  h+=`<section class="sec"><div class="sec-h"><h2>II · Offene Forderungen</h2><span class="sub">Medifox-Rechnungsübersicht und thevea-Rechnungen</span></div><div class="tbl-wrap"><table><thead><tr><th>Quelle</th><th>Betrieb</th><th>Art</th><th class="r">Rechnungen</th><th class="r">Offen</th><th style="min-width:110px"></th></tr></thead><tbody>`;
+  const mxF=Math.max(...pts.map(x=>x.saldo),...Object.values(reOffen).map(x=>x.offen),1);
+  pts.sort((a,b)=>b.saldo-a.saldo).forEach(x=>{const e=BANK_ENT.find(e=>e.pre===x.prefix);h+=`<tr><td class="c-m">Medifox</td><td><span class="site"><span class="dot" style="background:${e.col}"></span>${esc(e.l)}</span></td><td>${esc(x.typ)}</td><td class="r">${n0(x.count)}</td><td class="r"><b>${eur0(x.saldo)}</b></td><td><div class="bar"><i style="width:${x.saldo/mxF*100}%;background:var(--blue)"></i></div></td></tr>`;});
+  Object.entries(reOffen).sort((a,b)=>b[1].offen-a[1].offen).forEach(([art,x])=>{h+=`<tr><td class="c-m">thevea</td><td><span class="site"><span class="dot" style="background:var(--primary)"></span>KIMOJO GmbH</span></td><td>${esc(art)}</td><td class="r">${n0(x.n)}</td><td class="r"><b>${eur0(x.offen)}</b></td><td><div class="bar"><i style="width:${x.offen/mxF*100}%;background:var(--blue)"></i></div></td></tr>`;});
+  h+=`<tr class="sum"><td colspan="3">Summe</td><td class="r">${n0(medifoxN+theveaN)}</td><td class="r">${eur0(ford)}</td><td></td></tr></tbody></table></div><p class="hint">Medifox: Rechnungen mit offenem Saldo aus der Rechnungsübersicht (Nummern mit „K-“ gehören zu Kitzingen, ohne Präfix zu KIMOJO vor dem Cutover). thevea: nicht stornierte Rechnungen mit Restbetrag (Betrag minus Zahlungseingang). Kassenabrechnungen über thevea erscheinen hier noch nicht.</p></section>`;
+  // III Unabgerechnet
+  const offE=Object.entries(off).sort((a,b)=>b[1].offen-a[1].offen);const mxO=Math.max(...offE.map(x=>x[1].offen),1);
+  h+=`<section class="sec"><div class="sec-h"><h2>III · Erbracht, noch nicht abgerechnet</h2><span class="sub">bis heute</span></div><div class="tbl-wrap"><table><thead><tr><th>Standort</th><th class="r">Offen</th><th style="min-width:110px"></th><th>Quelle</th></tr></thead><tbody>${offE.map(([s,x])=>`<tr><td>${siteTag(s)}</td><td class="r"><b>${eur0(x.offen)}</b></td><td><div class="bar"><i style="width:${x.offen/mxO*100}%;background:var(--amber)"></i></div></td><td class="c-m">${esc(x.quelle)}</td></tr>`).join('')}<tr class="sum"><td>Summe</td><td class="r">${eur0(offSum)}</td><td></td><td></td></tr></tbody></table></div><p class="hint">Kitzingen: Leistungen bis heute ohne Kennzeichen „Abgerechnet“ (ohne Club, T-RENA, Kurse, Ausfallrechnungen). KIMOJO: erbrachter Kalenderwert seit dem thevea-Cutover minus der in thevea abgerechneten Verordnungen – Rezepte laufen meist noch, der Wert ist also eine Pipeline, kein Rückstand.</p></section>`;
   return h;
 }
 
