@@ -5,7 +5,7 @@
 // Bereiche, die noch nicht umgebaut sind, verweisen auf die alte Ansicht.
 const PAGES=[
   {id:'uebersicht',l:'Übersicht'},
-  {id:'erbracht',l:'Erbracht',alt:true},
+  {id:'erbracht',l:'Erbracht'},
   {id:'vorschau',l:'Jahresvorschau',alt:true},
   {id:'planist',l:'Plan vs. Ist',alt:true},
   {id:'auslastung',l:'Auslastung',alt:true},
@@ -83,7 +83,7 @@ function rNav(){
 function rPage(){
   const el=document.getElementById('page');if(!el)return;
   const p=PAGES.find(x=>x.id===page)||PAGES[0];
-  el.innerHTML=p.id==='uebersicht'?pUebersicht():pAlt(p);
+  el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():pAlt(p);
   window.scrollTo({top:0});
 }
 function pAlt(p){
@@ -227,4 +227,75 @@ function secAuslastung(){
   h+='</tbody></table></div>';
   h+='<p class="hint">Werneck aus der Tagesmessung des Patientenchecker-Praxismanagements: bereinigt = geplante Patientenminuten ÷ verfügbare Minuten ohne Blocker, Pausen und Fahrzeiten; brutto = ÷ Arbeitsminuten. Kitzingen aus dem Medifox-Umsatzexport: gebuchte Minuten ÷ anwesende Soll-Minuten. Wochen- und Zeitraumwerte sind Summenquotienten. Ampel: ≥ 90 % grün, ≥ 80 % gelb.</p>';
   return h+'</section>';
+}
+
+
+// ── Erbracht ─────────────────────────────────────────────────────────────
+// Werneck: jeder thevea-Kalender-Slot mit seinem Heilmittelwert (stattgefunden,
+// geplant ohne Status, Ausfall, Reservierung). Kitzingen: Medifox-Behandlungen
+// ohne Club, T-RENA und Präventionskurse. Beide in einer Struktur.
+function erbrachtZeilen(){
+  const months=getActiveMonths(),monthNums=months.map(m=>MN.indexOf(m)+1);
+  const theraNames=new Set(D.ctrl.filter(t=>matchS(t.s)).map(t=>t.n));
+  return D.raw.filter(r=>monthNums.includes(r.month)&&tvRowPasst(r,theraNames)).map(r=>{
+    if(r.src==='thevea')return r;
+    // Medifox-Zeile wie eine stattgefundene Kalenderzeile behandeln
+    return{name:r.name,month:r.month,price:r.price,kind:'erbracht',hm:r.leistung||'—',quelle:'medifox',standort:rowSite(r),src:'medifox',datum:null};
+  });
+}
+function pErbracht(){
+  const months=getActiveMonths(),monthNums=months.map(m=>MN.indexOf(m)+1);
+  const rows=erbrachtZeilen();
+  if(!rows.length)return`<section class="sec"><div class="sec-h"><h2>Umsatz erbracht</h2><span class="sub">${esc(zeitraumLabel())} · ${esc(sn(aS))}</span></div><div class="empty">Keine Termine im gewählten Zeitraum.</div></section>`;
+  const agg=()=>({n:0,erbracht:0,offen:0,ausfall:0,reserviert:0,gesamt:0,nAusfall:0,nReserviert:0,ng:0});
+  const add=(a,r)=>{a.n++;a[r.kind]+=r.price;a.gesamt+=r.price;if(r.kind==='ausfall')a.nAusfall++;if(r.kind==='reserviert')a.nReserviert++;if(r.quelle==='geschaetzt')a.ng++;};
+  const byM={},byT={},byL={},bySite={},tot=agg();
+  rows.forEach(r=>{
+    add(byM[r.month]||(byM[r.month]=agg()),r);add(tot,r);
+    add(byT[r.name]||(byT[r.name]=Object.assign(agg(),{standort:r.standort})),r);
+    add(bySite[r.standort]||(bySite[r.standort]=agg()),r);
+    const lk=r.standort+'|'+r.hm;const l=byL[lk]||(byL[lk]={standort:r.standort,hm:r.hm,n:0,sum:0});l.n++;l.sum+=r.price;
+  });
+  const jahr=new Date().getFullYear();
+  const statistik=mi=>{const ym=jahr+'-'+String(mi).padStart(2,'0');let b=0,has=false;TV_LOCS.forEach(l=>{if(!matchS(l.standort))return;const s=D.thevea&&D.thevea.statistik&&D.thevea.statistik[l.standort+'|'+ym];if(s){b+=s.brutto;has=true;}});return has?b:null;};
+  const zukunft=rows.filter(r=>r.datum&&r.datum>new Date()).reduce((s,r)=>s+r.price,0);
+  // Kennzahlen
+  let h=`<section class="sec"><div class="sec-h"><h2>Umsatz erbracht</h2><span class="sub">${esc(zeitraumLabel())} · ${esc(sn(aS))}${D.thevea&&D.thevea.bis?' · stattgefunden bis '+D.thevea.bis.toLocaleDateString('de-DE'):''}</span></div><div class="grid">`;
+  h+=`<div class="kpi big"><div class="l">Gesamt</div><div class="v">${eur0(tot.gesamt)}</div><div class="s">${n0(tot.n)} Termine · davon <b>${eur0(zukunft)}</b> geplant in der Zukunft</div></div>`;
+  h+=`<div class="kpi"><div class="l">Stattgefunden</div><div class="v c-g">${eur0(tot.erbracht)}</div><div class="s">mit Status in thevea bzw. Medifox-Behandlung</div></div>`;
+  h+=`<div class="kpi"><div class="l">Ohne Status</div><div class="v">${eur0(tot.offen)}</div><div class="s">geplante Termine mit Planwert</div></div>`;
+  h+=`<div class="kpi"><div class="l">Ausfall · Reserviert</div><div class="v">${eur0(tot.ausfall)} · ${eur0(tot.reserviert)}</div><div class="s">${n0(tot.nAusfall)} Ausfälle · ${n0(tot.nReserviert)} Reservierungen ohne Rezept</div></div>`;
+  h+='</div>';
+  const sites=Object.keys(bySite);
+  if(sites.length>1)h+='<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Standort</th><th class="r">Termine</th><th class="r">Stattgefunden</th><th class="r">Ohne Status</th><th class="r">Ausfall</th><th class="r">Reserviert</th><th class="r">Gesamt</th></tr></thead><tbody>'+sites.map(s=>{const a=bySite[s];return`<tr><td>${siteTag(s)}</td><td class="r">${n0(a.n)}</td><td class="r">${eur0(a.erbracht)}</td><td class="r">${eur0(a.offen)}</td><td class="r">${eur0(a.ausfall)}</td><td class="r">${eur0(a.reserviert)}</td><td class="r"><b>${eur0(a.gesamt)}</b></td></tr>`;}).join('')+'</tbody></table></div>';
+  h+='</section>';
+  // Nach Monat
+  const zeile=(label,a,st,sum)=>`<tr${sum?' class="sum"':''}><td>${esc(label)}</td><td class="r">${n0(a.n)}</td><td class="r">${eur0(a.erbracht)}</td><td class="r">${eur0(a.offen)}</td><td class="r">${eur0(a.ausfall)} <span class="c-m">(${a.nAusfall})</span></td><td class="r">${eur0(a.reserviert)} <span class="c-m">(${a.nReserviert})</span></td><td class="r"><b>${eur0(a.gesamt)}</b></td><td class="r">${st==null?'—':eur0(st)}</td><td class="r${a.ng?' c-a':''}">${n0(a.ng)}</td></tr>`;
+  let stSum=0,stHas=false;
+  h+=`<section class="sec"><div class="sec-h"><h2>Nach Monat</h2><span class="sub">Jeder Kalender-Slot einzeln · ohne Status = Planwert · Ausfall = Heilmittelwert</span></div><div class="tbl-wrap"><table><thead><tr><th>Monat</th><th class="r">Termine</th><th class="r">Stattgefunden</th><th class="r">Ohne Status</th><th class="r">Ausfall</th><th class="r">Reserviert</th><th class="r">Gesamt</th><th class="r">thevea-Abrechnung</th><th class="r">Standardsatz</th></tr></thead><tbody>`;
+  monthNums.forEach(mi=>{const a=byM[mi];if(!a)return;const st=statistik(mi);if(st!=null){stSum+=st;stHas=true;}h+=zeile(MN[mi-1],a,st,false);});
+  h+=zeile('Summe',tot,stHas?stSum:null,true)+'</tbody></table></div>';
+  let ungew=0;TV_LOCS.forEach(l=>{if(!matchS(l.standort))return;const st=(D.thevea&&D.thevea.stat&&D.thevea.stat[l.standort])||{};monthNums.forEach(mi=>{ungew+=(st[mi]&&st[mi].nUngewertet)||0;});});
+  const extra=(D.thevea&&D.thevea.kitzExtra||[]).filter(r=>monthNums.includes(r.month)&&matchS('PF im Park'));
+  h+='<p class="hint">„thevea-Abrechnung“ ist die Umsatzstatistik brutto aus thevea selbst und zählt nur schon abgerechnete Einheiten, liegt deshalb unter dem Kalenderwert. „Standardsatz“ sind Termine, deren Preis weder thevea noch die GKV-Liste kannte.'
+    +(ungew?` ${n0(ungew)} Patiententermine ohne Rezept bei Personen, die nicht behandeln (Club-Einweisungen, Beratungen), sind nicht gewertet.`:'')
+    +(extra.length?` Kitzingen ohne ${n0(extra.length)} Club-, T-RENA- und Kurspositionen (${eur0(extra.reduce((s,r)=>s+r.price,0))}).`:'')+'</p></section>';
+  // Nach Therapeut:in
+  const tl=Object.keys(byT).map(n=>Object.assign({name:n},byT[n])).sort((a,b)=>b.gesamt-a.gesamt);
+  h+=`<section class="sec"><div class="sec-h"><h2>Nach Therapeut:in</h2><span class="sub">${tl.length} Personen</span></div><div class="tbl-wrap"><table><thead><tr><th>Therapeut:in</th><th>Standort</th><th class="r">Termine</th><th class="r">Stattgefunden</th><th class="r">Ohne Status</th><th class="r">Ausfall</th><th class="r">Reserviert</th><th class="r">Gesamt</th></tr></thead><tbody>`;
+  tl.forEach(t=>{h+=`<tr><td>${esc(t.name)}</td><td>${siteTag(t.standort)}</td><td class="r">${n0(t.n)}</td><td class="r">${eur0(t.erbracht)}</td><td class="r">${eur0(t.offen)}</td><td class="r">${eur0(t.ausfall)}</td><td class="r">${eur0(t.reserviert)}</td><td class="r"><b>${eur0(t.gesamt)}</b></td></tr>`;});
+  h+='</tbody></table></div></section>';
+  // Nach Leistung je Standort
+  h+=`<section class="sec"><div class="sec-h"><h2>Nach Leistung</h2><span class="sub">Top 15 je Standort</span></div><div class="grid g3" style="align-items:start">`;
+  sitesAktiv().filter(s=>bySite[s]).forEach(s=>{
+    const ll=Object.values(byL).filter(l=>l.standort===s).sort((a,b)=>b.sum-a.sum);
+    h+=`<div><div style="margin-bottom:6px">${siteTag(s)}</div><div class="tbl-wrap"><table style="min-width:0"><thead><tr><th>Leistung</th><th class="r">n</th><th class="r">ø</th><th class="r">Umsatz</th></tr></thead><tbody>`;
+    ll.slice(0,15).forEach(l=>{h+=`<tr><td style="white-space:normal">${esc(String(l.hm).slice(0,48))}</td><td class="r">${n0(l.n)}</td><td class="r">${n1(l.sum/l.n)} €</td><td class="r"><b>${eur0(l.sum)}</b></td></tr>`;});
+    if(ll.length>15)h+=`<tr><td colspan="4" class="c-m">… ${ll.length-15} weitere</td></tr>`;
+    h+='</tbody></table></div></div>';
+  });
+  h+='</div></section>';
+  // Methodik
+  h+=`<section class="sec"><details><summary style="cursor:pointer;font-weight:600">Wie gerechnet wird</summary><p class="hint" style="margin-top:8px">Jeder Kalender-Slot zählt einzeln, zwei 20-Minuten-Termine sind zwei KG. Preis je Termin: zuerst der Wert, den thevea für die Verordnung ausweist (Verordnungswert-Prognose, inklusive Privat-, Beihilfe-, BG-Sätzen und Hausbesuchspauschale), sonst das Heilmittel nach der GKV-Preisliste 2026 plus Hausbesuchspauschale je Besuch, zuletzt der Standardsatz Krankengymnastik. Termine ohne Status zählen mit Planwert, Ausfall (ausgefallen oder abgesagt) mit dem Heilmittelwert. Reservierungen sind Patiententermine ohne Verordnung bei Behandler:innen mit mindestens ${TV_BEHANDLER_MIN} Rezeptterminen: 20 Min = KG 29,63 €, 30 Min = MLD-30 35,97 €, 45 Min = MLD-45 53,94 €, andere Längen als Vielfache von 20 Min KG. Blocker zählen nicht. Ab 27.07.2026 (Ergo 01.08.) ersetzt der thevea-Kalender die Medifox-Exporte für KIMOJO; Kitzingen bleibt Medifox ohne Club, T-RENA und Präventionskurse.</p></details></section>`;
+  return h;
 }
