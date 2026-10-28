@@ -602,6 +602,12 @@ const TV_GKV=[
 ];
 const TV_STANDARD=29.63;
 const TV_ABGESAGT=/ABGESAGT|ABSAGE|STORN|AUSGEFALLEN|ENTFALLEN|NICHT.?ERSCHIENEN|CANCEL/i;
+// Eine Reservierung ist ein Patiententermin ohne Rezept — aber nur bei
+// jemandem, der behandelt. Club-Trainer:innen tragen Einweisungen und
+// Beratungen ebenfalls als Patiententermin ohne Rezept ein; das sind keine
+// freigehaltenen Behandlungsplätze. Als Behandler:in gilt, wer im
+// Historienfenster mindestens so viele Termine mit Verordnung hat.
+const TV_BEHANDLER_MIN=10;
 function tvGkvPreis(txt){const t=String(txt||'');for(const[re,p]of TV_GKV)if(re.test(t))return p;return null;}
 function tvReservPreis(min){
   if(!(min>0))min=20;
@@ -664,6 +670,7 @@ function tvBerechne(loc,hist,voUeb,voDet,prog,ctrl,jahr){
   const termine=hist&&hist.data&&hist.data.termine||(Array.isArray(hist)?hist:[]);
   const cut=new Date(loc.cutover+'T00:00:00');
   const rows=[],stat={},hbSeen={};
+  const voJe={};termine.forEach(t=>{if(t&&t.__typename==='PatientenTermin'&&t.terminVerordnung&&t.terminVerordnung.id!=null){const id=t.mitarbeiter&&t.mitarbeiter.person&&t.mitarbeiter.person.id;voJe[id]=(voJe[id]||0)+1;}});
   termine.forEach(t=>{
     if(!t||t.__typename!=='PatientenTermin')return;
     const d=new Date(t.from);if(isNaN(d)||d<cut||d.getFullYear()!==jahr)return;
@@ -674,6 +681,10 @@ function tvBerechne(loc,hist,voUeb,voDet,prog,ctrl,jahr){
     const vo=t.terminVerordnung;
     let kind,price,quelle,hm;
     if(!vo||vo.id==null){
+      if((voJe[p.id]||0)<TV_BEHANDLER_MIN){
+        // Kein Behandler: Termin ohne Rezept wird nicht bewertet, nur gezählt.
+        const s0=stat[month]||(stat[month]=tvStatAgg());s0.nUngewertet=(s0.nUngewertet||0)+1;return;
+      }
       kind='reserviert';price=tvReservPreis(durMin);quelle='reserviert';hm='Reservierung '+(durMin>0?durMin:20)+' Min';
     }else{
       kind=TV_ABGESAGT.test(st)?'ausfall':st==='STATTGEFUNDEN'?'erbracht':'offen';
@@ -795,6 +806,8 @@ function rTV(){
   let stSum=0,stHas=false;
   monthNums.forEach(mi=>{const a=byM[mi];if(!a)return;const st=statistik(mi);if(st!=null){stSum+=st;stHas=true;}h+=zeile(MN[mi-1],a,st,false);});
   h+=zeile('Summe',tot,stHas?stSum:null,true)+'</tbody></table>';
+  let ungew=0;TV_LOCS.forEach(l=>{if(!matchS(l.standort))return;const st=D.thevea.stat[l.standort]||{};monthNums.forEach(mi=>{ungew+=(st[mi]&&st[mi].nUngewertet)||0;});});
+  if(ungew)h+='<p style="font-size:11.5px;color:var(--faint);margin:10px 0 0">'+ungew+' Patiententermine ohne Rezept bei Personen, die nicht behandeln (z. B. Club-Einweisungen, Beratungen), sind nicht als Reservierung gewertet.</p>';
   h+='<p style="font-size:11.5px;color:var(--faint);margin:10px 0 0">„thevea-Abrechnung" ist die Umsatzstatistik brutto aus thevea selbst (Controlling/thevea, Monatsdatei) — sie zählt nur Einheiten, die thevea schon als abgerechnet führt, und liegt deshalb unter dem Kalenderwert; der Kalender zählt jeden Slot, so wie thevea ihn später auch abrechnet. Die Spalte „Standardsatz" nennt Termine, deren Preis weder thevea noch die GKV-Liste kannte.</p></div>';
   // Therapeuten
   const tl=Object.keys(byT).map(n=>Object.assign({name:n},byT[n])).sort((a,b)=>b.gesamt-a.gesamt);
@@ -811,7 +824,7 @@ function rTV(){
   h+='</tbody></table></div>';
   h+='<div class="cd"><div class="ct">So wird gerechnet</div><p style="font-size:12.5px;color:var(--muted);line-height:1.6;margin:0">'
     +'<b>Preis je Termin:</b> zuerst der Wert, den thevea selbst für diese Verordnung ausweist (Verordnungswert-Prognose, inklusive Privat-, Beihilfe- und BG-Sätzen und Hausbesuchspauschale); sonst das Heilmittel nach der GKV-Preisliste 2026 plus Hausbesuchspauschale je Besuch; zuletzt der Standardsatz Krankengymnastik. '
-    +'<b>Reservierungen</b> sind Patiententermine ohne Verordnung: 20 Min = KG 29,63 €, 30 Min = MLD-30 35,97 €, 45 Min = MLD-45 53,94 €, andere Längen als Vielfache von 20 Min KG (40 Min = zwei KG). '
+    +'<b>Reservierungen</b> sind Patiententermine ohne Verordnung bei Behandler:innen (mindestens '+TV_BEHANDLER_MIN+' Termine mit Rezept im Zeitfenster; Club-Einweisungen und Beratungen zählen damit nicht): 20 Min = KG 29,63 €, 30 Min = MLD-30 35,97 €, 45 Min = MLD-45 53,94 €, andere Längen als Vielfache von 20 Min KG (40 Min = zwei KG). '
     +'<b>Blocker</b> und andere interne Einträge zählen nicht. <b>Ab 27.07.2026</b> (Ergo 01.08.) ersetzt der thevea-Kalender die Medifox-Exporte für KIMOJO; PF im Park bleibt Medifox.</p></div>';
   if(aS==='Alle')h+=tvKitzingen(months,monthNums);
   el.innerHTML=h;
