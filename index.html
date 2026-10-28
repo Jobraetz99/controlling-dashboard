@@ -733,7 +733,12 @@ function tvBerechne(loc,hist,voUeb,voDet,prog,ctrl,jahr){
 function tvRowPasst(r,theraNames){
   if(aS==='Alle')return true;
   if(r.standort)return matchS(r.standort);
-  return theraNames.has(r.name);
+  // Medifox ist seit dem Cutover nur noch Kitzingen: PHFIP-Zeilen gehören zu
+  // PF im Park, egal wie die Teams-Tabelle die Person führt. Alte
+  // KIMOJO-Zeilen (vor dem Cutover) laufen weiter über den Namen.
+  if(r.filiale==='PHFIP')return matchS('PF im Park');
+  if(aS==='PF im Park')return false;
+  return theraNames.has(r.name)||aS==='KIMOJO Gesamt';
 }
 async function tvLaden(){
   const jahr=new Date().getFullYear();
@@ -847,6 +852,9 @@ function tvStammdaten(jahr,az,f4){
   Object.keys(muster).forEach(n=>{
     let t=findCtrl(n);
     if(!t){t={n,s:'PF im Park',b:'Physio',wh:0,mh:{},quelle:'medifox'};ctrl.push(t);}
+    // Wer im Medifox-Plan von Kitzingen steht, arbeitet in Kitzingen – auch
+    // wenn die Teams-Tabelle die Person noch bei KIMOJO führt.
+    if(t.azQuelle!=='thevea')t.s='PF im Park';
     t.mh=t.mh||{};
     const ks=Object.keys(muster[n]).map(Number).filter(voll).sort((a,b)=>b-a);
     if(!ks.length)return;
@@ -3529,7 +3537,8 @@ function rT(){
   if(kwVal!=='all')filtered=filtered.filter(r=>r.week===parseInt(kwVal));
   const numWeeks=kwVal!=='all'?1:null;
   const numM=months.length||1;
-  filtered=filtered.filter(r=>!(r.filiale==='PHFIP'&&tvIstKurs(r)));
+  const theraNames=new Set(D.ctrl.filter(t=>matchS(t.s)).map(t=>t.n));
+  filtered=filtered.filter(r=>tvRowPasst(r,theraNames)&&!(r.filiale==='PHFIP'&&tvIstKurs(r)));
   const agg={};filtered.forEach(r=>{if(!agg[r.name])agg[r.name]={rev:0,cnt:0};agg[r.name].rev+=r.price;agg[r.name].cnt++;});
   let list=D.ctrl.filter(t=>matchS(t.s)).map(t=>{
     const a=agg[t.n]||{rev:0,cnt:0};
