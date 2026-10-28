@@ -287,7 +287,8 @@ function pErbracht(){
   tl.forEach((t,i)=>{
     const ev=t.soll>0?t.gesamt/t.soll:null,ea=t.anw>0?t.gesamt/t.anw:null;
     h+=`<tr class="t-row" onclick="toggleTage('tg${i}')" style="cursor:pointer"><td><b>${esc(t.name)}</b></td><td>${siteTag(t.standort)}</td><td class="r">${n0(t.n)}</td><td class="r"><b>${eur0(t.gesamt)}</b></td><td class="r">${eur0(t.erbracht)}</td><td class="r">${eur0(t.offen)}</td><td class="r c-m">${eur0(t.ausfall+t.reserviert)}</td><td class="r">${n1(t.soll)}${t.tracker?' <span title="Stunden aus dem Weekly Tracker">*</span>':''}</td><td class="r">${n1(t.anw)}</td><td class="r">${ev==null?'—':`<span class="pill ${amp(ev)}">${n1(ev)}</span>`}</td><td class="r">${ea==null?'—':`<span class="pill ${amp(ea)}">${n1(ea)}</span>`}</td></tr>`;
-    h+=`<tr id="tg${i}" style="display:none"><td colspan="11" style="padding:0 0 10px 0;background:var(--bg)">${tageTabelle(t,rows.filter(r=>r.name===t.name))}</td></tr>`;
+    ERB_TAGE['tg'+i]={t,rows:rows.filter(r=>r.name===t.name)};
+    h+=`<tr id="tg${i}" style="display:none"><td colspan="11" style="padding:0 0 10px 0;background:var(--bg)"></td></tr>`;
   });
   h+='</tbody></table></div><p class="hint">€ je Stunde = Umsatz der Person ÷ Soll-Stunden bzw. anwesende Stunden des Zeitraums; Ampel ab 65 grün, ab 56 gelb. Stern: Stunden aus dem Weekly Tracker ohne Abwesenheiten.</p></section>';
   // Methodik
@@ -500,7 +501,9 @@ function pAuslastung(){
 
 
 // Tageszeilen einer Person auf der Erbracht-Seite: Termine, Umsatz, Stunden.
-function toggleTage(id){const el=document.getElementById(id);if(el)el.style.display=el.style.display==='none'?'':'none';}
+// Tageszeilen werden erst beim ersten Aufklappen gebaut (sonst wird die Seite sehr groß).
+const ERB_TAGE={};
+function toggleTage(id){const el=document.getElementById(id);if(!el)return;if(!el.dataset.ok){const d=ERB_TAGE[id];if(d){el.firstElementChild.innerHTML=tageTabelle(d.t,d.rows);el.dataset.ok='1';}}el.style.display=el.style.display==='none'?'':'none';}
 function tageTabelle(t,rows){
   const byD={};
   rows.forEach(r=>{let y;if(r.datum){y=ymdP(r.datum);}else if(r.dateKey){const p=r.dateKey.split('-');y=p[0]+'-'+String(p[1]).padStart(2,'0')+'-'+String(p[2]).padStart(2,'0');}else return;
