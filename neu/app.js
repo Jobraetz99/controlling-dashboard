@@ -138,7 +138,7 @@ function secAnfragen(){
   const aktWoche=wMo===ymdP(montag(h0));
   const sum=(arr,f)=>arr.reduce((s,x)=>s+(x[f]||0),0);
   const istWerktag=ds=>{const d=ausYmd(ds).getDay();return d>=1&&d<=5;};
-  const tot={tag:0,neuTag:0,wo:0,neuWo:0,vw:0,neuVw:0,zr:0,neuZr:0,oWo:0,hatO:false,tageZr:0};
+  const tot={tag:0,neuTag:0,wo:0,neuWo:0,vw:0,neuVw:0,zr:0,neuZr:0,oWo:0,hatO:false,tageZr:0,tWo:0,tVw:0};
   let rowsH='';
   quellen.forEach(q=>{
     const t=q.d.find(x=>x.ds===sel);
@@ -148,22 +148,25 @@ function secAnfragen(){
     // Monatsrand und Feiertage drücken den Wert so nicht.
     const wt=new Set(inZr.filter(x=>istWerktag(x.ds)).map(x=>x.ds)).size;
     const oWo=wt?sum(inZr,'vereinbart')/wt*5:null;
-    tot.tag+=t?t.vereinbart||0:0;tot.neuTag+=t?t.neu||0:0;tot.wo+=sum(wo,'vereinbart');tot.neuWo+=sum(wo,'neu');tot.vw+=sum(vw,'vereinbart');tot.neuVw+=sum(vw,'neu');tot.zr+=sum(inZr,'vereinbart');tot.neuZr+=sum(inZr,'neu');if(oWo!=null){tot.oWo+=oWo;tot.hatO=true;}tot.tageZr=Math.max(tot.tageZr,wt);
+    tot.tag+=t?t.vereinbart||0:0;tot.neuTag+=t?t.neu||0:0;tot.wo+=sum(wo,'vereinbart');tot.neuWo+=sum(wo,'neu');tot.vw+=sum(vw,'vereinbart');tot.neuVw+=sum(vw,'neu');tot.zr+=sum(inZr,'vereinbart');tot.neuZr+=sum(inZr,'neu');if(oWo!=null){tot.oWo+=oWo;tot.hatO=true;}tot.tageZr=Math.max(tot.tageZr,wt);tot.tWo=Math.max(tot.tWo,new Set(wo.filter(x=>x.vereinbart!=null&&istWerktag(x.ds)).map(x=>x.ds)).size);tot.tVw=Math.max(tot.tVw,new Set(vw.filter(x=>x.vereinbart!=null&&istWerktag(x.ds)).map(x=>x.ds)).size);
     rowsH+=`<tr><td>${siteTag(q.site)}</td><td class="r"><b>${t&&t.vereinbart!=null?n0(t.vereinbart):'—'}</b></td><td class="r">${t&&t.neu!=null?n0(t.neu):'—'}</td><td class="r"><b>${n0(sum(wo,'vereinbart'))}</b> <span class="c-m">(${n0(sum(wo,'neu'))})</span></td><td class="r">${n0(sum(vw,'vereinbart'))} <span class="c-m">(${n0(sum(vw,'neu'))})</span></td><td class="r"><b>${oWo==null?'—':n1(oWo)}</b></td><td class="r">${n0(sum(inZr,'neu'))}</td></tr>`;
   });
   const pfeil=(dir,ok)=>`<button class="btn" style="padding:2px 9px;font-size:15px;line-height:1.2${ok?'':';opacity:.35;cursor:default'}" ${ok?`onclick="anfrSchritt(${dir})"`:'disabled'} aria-label="${dir<0?'Vortag':'Nächster Tag'}">${dir<0?'‹':'›'}</button>`;
   const tagLabel=sel?fDat(selD):'—';
   const kw=sel?tvWoche(selD):null;
+  const oTag=tot.tWo?tot.wo/tot.tWo:null,oTagV=tot.tVw?tot.vw/tot.tVw:null;
+  const delta=(a,b)=>a==null||b==null||!b?'':`<span class="pill ${a>=b?'p-g':'p-r'}" style="margin-left:6px">${a>=b?'+':''}${n0((a-b)/b*100)} %</span>`;
+  const wLabel=aktWoche?'diese Woche':'KW '+kw;
   h+=`<div class="grid">`+
     `<div class="kpi"><div class="l" style="display:flex;align-items:center;justify-content:space-between;gap:6px"><span>${sel===tage[tage.length-1]?'Letzter Tag':'Tag'}</span><span style="display:flex;align-items:center;gap:6px">${pfeil(-1,iSel>0)}<span style="text-transform:none;letter-spacing:0;color:var(--dark)">${esc(tagLabel)}</span>${pfeil(1,iSel<tage.length-1)}</span></div><div class="v">${n0(tot.tag)}</div><div class="s">davon <b>${n0(tot.neuTag)}</b> Neuanfragen</div></div>`+
-    `<div class="kpi"><div class="l">${aktWoche?'Diese Woche':'Woche (KW '+kw+')'}</div><div class="v">${n0(tot.wo)}</div><div class="s">Vorwoche <b>${n0(tot.vw)}</b> · neu <b>${n0(tot.neuWo)}</b>${aktWoche?' · bis heute':''}</div></div>`+
-    `<div class="kpi"><div class="l">ø je Woche</div><div class="v">${tot.hatO?n1(tot.oWo):'—'}</div><div class="s">${esc(zeitraumLabel())} · ${tot.tageZr} erfasste Werktage × 5</div></div>`+
-    `<div class="kpi"><div class="l">Neuanfragen</div><div class="v">${n0(tot.neuZr)}</div><div class="s">${esc(zeitraumLabel())} · von ${n0(tot.zr)} Terminen</div></div>`+
+    `<div class="kpi"><div class="l">ø Anfragen je Tag · ${esc(wLabel)}</div><div class="v">${oTag==null?'—':n1(oTag)}${delta(oTag,oTagV)}</div><div class="s">Vorwoche <b>${oTagV==null?'—':n1(oTagV)}</b> je Tag · ${tot.tWo} Werktag${tot.tWo===1?'':'e'} erfasst</div></div>`+
+    `<div class="kpi"><div class="l">Anfragen · ${esc(wLabel)}</div><div class="v">${n0(tot.wo)}</div><div class="s">Vorwoche <b>${n0(tot.vw)}</b>${aktWoche?' · Woche läuft noch':''}</div></div>`+
+    `<div class="kpi"><div class="l">Neuanfragen · ${esc(wLabel)}</div><div class="v">${n0(tot.neuWo)}${delta(tot.tWo?tot.neuWo/tot.tWo:null,tot.tVw?tot.neuVw/tot.tVw:null)}</div><div class="s">Vorwoche <b>${n0(tot.neuVw)}</b> · ${esc(zeitraumLabel())}: ${n0(tot.neuZr)}</div></div>`+
     `</div>`;
   h+=`<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Standort</th><th class="r">${esc(tagLabel)}</th><th class="r">davon neu</th><th class="r">${aktWoche?'Diese Woche':'KW '+kw} (neu)</th><th class="r">Vorwoche (neu)</th><th class="r">ø je Woche</th><th class="r">Neuanfragen Zeitraum</th></tr></thead><tbody>${rowsH}</tbody></table></div>`;
   const letzter=tage[tage.length-1];
   if(letzter&&letzter<ymdP(plusTage(h0,-14)))h+=`<p class="hint c-r">Der Tracker ist seit dem ${esc(fDat(ausYmd(letzter)))} nicht mehr gepflegt – die Werte oben sind entsprechend alt.</p>`;
-  h+=`<p class="hint">Quelle: Weekly KPI Tracker, Spalten „Termine vereinbart“ und „davon Neuaufnahmen/Neuanfragen“ je Tag. Mit den Pfeilen wechselst du den Tag; die Woche folgt dem gewählten Tag. ø je Woche = Termine im Zeitraum ÷ Werktage mit Eintrag × 5, so zählen angebrochene Wochen am Monatsrand nicht als volle Woche. Tage ohne Eintrag fehlen und zählen nicht als null.</p>`;
+  h+=`<p class="hint">Quelle: Weekly KPI Tracker, Spalten „Termine vereinbart“ und „davon Neuaufnahmen/Neuanfragen“ je Tag. Mit den Pfeilen wechselst du den Tag; die Kacheln zeigen die Kalenderwoche dieses Tages und klein die Vorwoche. ø je Tag = Anfragen der Woche ÷ Werktage mit Eintrag, so ist eine laufende Woche mit der Vorwoche vergleichbar; die Prozentangabe vergleicht je Tag. In der Tabelle: ø je Woche = Anfragen im Zeitraum ÷ Werktage mit Eintrag × 5. Tage ohne Eintrag fehlen und zählen nicht als null.</p>`;
   return h+'</section>';
 }
 
