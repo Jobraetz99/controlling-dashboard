@@ -1213,7 +1213,7 @@ function pVorschauJahr(){
   const istIdx=MN.map((_,i)=>B.every(b=>b.M[i].useIst));const nIst=istIdx.filter(Boolean).length;
   const bisE=B.reduce((t,b)=>t+b.M.filter(d=>d.useIst).reduce((s,d)=>s+d.ist.ein,0),0),bisPE=B.reduce((t,b)=>t+b.M.filter(d=>d.useIst).reduce((s,d)=>s+d.plan.ein,0),0);
   const bisG=B.reduce((t,b)=>t+b.M.filter(d=>d.useIst).reduce((s,d)=>s+d.ist.gew,0),0),bisPG=B.reduce((t,b)=>t+b.M.filter(d=>d.useIst).reduce((s,d)=>s+d.plan.gew,0),0);
-  const erbBis=sumA(erbA.slice(0,cur)),erbPlan=sumA(pE.slice(0,cur));
+  const erbBis=sumA(erbA.slice(0,cur)),erbPlan=sumA(mon(d=>d.plan.th).slice(0,cur));
   const dP=(a,p,inv)=>{if(!p)return'';const d=(a-p)/Math.abs(p)*100,ok=inv?d<=0:d>=0;return`<span class="pill ${ok?'p-g':'p-r'}">${d>=0?'+':''}${n1(d)} %</span>`;};
   const istTxt=B.map(b=>`${b.l} ${b.istBis>=0?'bis '+MN[b.istBis]:'ohne BWA'}`).join(' · ');
   const fehlt=B.flatMap(b=>b.M.filter(d=>d.i<cur&&!d.useIst).map(d=>b.l+' '+d.m));
@@ -1227,7 +1227,7 @@ function pVorschauJahr(){
   h+=`<div class="grid g3" style="margin-top:12px">`;
   h+=`<div class="kpi"><div class="l">Einnahmen bisher (BWA)</div><div class="v">${fmK(bisE)}</div><div class="s">${dP(bisE,bisPE)} zum Plan derselben Monate <b>${fmK(bisPE)}</b></div></div>`;
   h+=`<div class="kpi"><div class="l">Gewinn bisher (BWA)</div><div class="v ${bisG>=0?'c-g':'c-r'}">${fmK(bisG)}</div><div class="s">${dP(bisG,bisPG)} zum Plan <b>${fmK(bisPG)}</b></div></div>`;
-  h+=`<div class="kpi"><div class="l">Erbracht Jan – ${MN[Math.max(0,cur-1)]} (Kalender)</div><div class="v">${fmK(erbBis)}</div><div class="s">${dP(erbBis,erbPlan)} zum Plan <b>${fmK(erbPlan)}</b> · ohne Club</div></div>`;
+  h+=`<div class="kpi"><div class="l">Erbracht Jan – ${MN[Math.max(0,cur-1)]} (Kalender)</div><div class="v">${fmK(erbBis)}</div><div class="s">${dP(erbBis,erbPlan)} zum Plan Therapie <b>${fmK(erbPlan)}</b> · ohne Club</div></div>`;
   h+=`</div>${fehlt.length?`<p class="hint">BWA fehlt für ${esc(fehlt.join(', '))} – dort steht der Plan.</p>`:''}</section>`;
   // je Betrieb
   if(B.length){
