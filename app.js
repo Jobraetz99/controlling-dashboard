@@ -795,6 +795,8 @@ function liqRezepte(hs){
   const taktG=med(lueck)||7;
   // Medifox kennt die Einheiten je Rezept nicht: typische Zahl aus abgeschlossenen, abgerechneten Rezepten
   const nTyp={};['KIMOJO','PHFIP'].forEach(b=>{nTyp[b]=med(alle.filter(z=>z.src!=='thevea'&&z.betrieb===b&&!z.fut.length&&z.past.length>=2&&z.past.every(x=>x.billed)).map(z=>z.past.length))||6;});
+  // Ende des Medifox-Kalenders je Betrieb: wer dort noch Termine hat, läuft wahrscheinlich weiter
+  const kalEnde={};alle.filter(z=>z.src!=='thevea').forEach(z=>z.fut.forEach(x=>{if(!kalEnde[z.betrieb]||x.d>kalEnde[z.betrieb])kalEnde[z.betrieb]=x.d;}));let nRand=0;
   alle.forEach(z=>{
     const lastP=z.past.length?new Date(Math.max(...z.past.map(x=>+x.d))):null,lastF=z.fut.length?new Date(Math.max(...z.fut.map(x=>+x.d))):null;
     let erb=0,plan=z.fut.reduce((t,x)=>t+x.p,0),fehlt=0,missing=0,unit=0;
@@ -806,7 +808,9 @@ function liqRezepte(hs){
       erb=z.past.filter(x=>!x.billed&&x.d>vor180).reduce((t,x)=>t+x.p,0);
       if(!erb&&!z.fut.length)return;
       // läuft das Rezept noch, fehlen bis zur typischen Länge noch Einheiten (Kalender reicht nur ~4 Wochen)
-      if(z.fut.length){const alleE=z.past.concat(z.fut);missing=Math.max(0,nTyp[z.betrieb]-alleE.length);unit=alleE.reduce((t,x)=>t+x.p,0)/alleE.length;}
+      if(z.fut.length){const alleE=z.past.concat(z.fut);missing=Math.max(0,nTyp[z.betrieb]-alleE.length);unit=alleE.reduce((t,x)=>t+x.p,0)/alleE.length;
+        // letzter Termin in der letzten Kalenderwoche: Ende unbekannt, 1–4 weitere Einheiten (verteilt)
+        if(kalEnde[z.betrieb]&&lastF>=plus(kalEnde[z.betrieb],-7))missing=Math.max(missing,1+(nRand++)%4);}
     }
     const takt=z.takt||taktG;
     let ende=lastF||lastP;
