@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light">
+<title>Offene Rechnungen · Theke</title>
+<link rel="stylesheet" href="styles.css">
+<script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
+<style>
+.tk-top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.tk-tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.tk-tools input{border:1px solid var(--border);border-radius:8px;padding:7px 10px;font:inherit;min-width:220px}
+.tk-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:10px}
+.tk-step{border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--muted);background:var(--card,#fff)}
+.tk-step b{color:var(--text);display:block;margin-bottom:2px}
+tr.done td{opacity:.45;text-decoration:line-through}
+td.ck{width:28px}
+.tk-n{font-variant-numeric:tabular-nums}
+@media print{.top,.tk-tools,.tk-steps,.foot,.ck,#lo{display:none!important}.sec{break-inside:avoid;box-shadow:none;border:0}}
+</style>
+</head>
+<body>
+<div id="lo"><div class="lb">
+<h1>Offene Rechnungen</h1>
+<p>Zahlungserinnerungen und Mahnungen · Theke</p>
+<button class="l-btn" onclick="anmelden()">
+<svg viewBox="0 0 21 21" fill="none"><rect x="1" y="1" width="9" height="9" fill="#F25022"/><rect x="11" y="1" width="9" height="9" fill="#7FBA00"/><rect x="1" y="11" width="9" height="9" fill="#00A4EF"/><rect x="11" y="11" width="9" height="9" fill="#FFB900"/></svg>
+Mit Microsoft anmelden</button>
+<p class="l-err" id="er" style="display:none"></p>
+</div></div>
+
+<div id="db" style="display:none">
+<header class="top"><div class="top-in">
+  <div class="brand tk-top">
+    <h1><span>Theke</span> · Offene Rechnungen</h1>
+    <div class="brand-r"><span id="stand"></span><button class="btn" onclick="laden()">Aktualisieren</button><button class="btn" onclick="window.print()">Drucken</button><button class="btn" onclick="abmelden()">Abmelden</button></div>
+  </div>
+  <div class="tk-tools"><div class="chips" id="chips"></div><input id="such" placeholder="Patient oder Rechnungsnummer suchen" oninput="zeigen()"></div>
+</div></header>
+<main class="main" id="page"></main>
+</div>
+
+<script>
+// Liest nur Controlling/Theke/mahnliste.json. Die Liste erzeugt der Bankabruf auf dem Mac
+// dreimal täglich (Rechnungen aus thevea und Medifox, Abgleich mit den Bankeingängen).
+const DRIVE='b!zgsNEKo9i02za4U_T3YWkHozjYkq7Z5PnXUOMXxU2mTsYCEji1-zTKOR1AXQWneL';
+const PFAD='12_Code/Controlling/Theke/mahnliste.json';
+const LR={scopes:['Files.Read','Sites.Read.All']};
+const app=new msal.PublicClientApplication({auth:{clientId:'9fe9cda7-79c3-4d06-82dc-372715bb8086',authority:'https://login.microsoftonline.com/3e5c8d47-8ccc-42f6-877d-0d0e72972e39',redirectUri:location.origin+location.pathname.replace(/theke\.html$/,'')},cache:{cacheLocation:'localStorage'}});
+let L=null,ort='Alle';
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const eur=v=>(v||0).toLocaleString('de-DE',{style:'currency',currency:'EUR'});
+const dat=s=>s?new Date(s+'T00:00:00').toLocaleDateString('de-DE'):'—';
+const kv=()=>{try{return JSON.parse(localStorage.getItem('theke-erledigt')||'{}');}catch(e){return{};}};
+function erledigt(nr,st,an){const k=kv();const key=nr+'|'+st;if(an)k[key]=new Date().toISOString().slice(0,10);else delete k[key];try{localStorage.setItem('theke-erledigt',JSON.stringify(k));}catch(e){}zeigen();}
+async function anmelden(){try{document.getElementById('er').style.display='none';const r=await app.loginPopup(LR);app.setActiveAccount(r.account);await laden();}catch(e){const er=document.getElementById('er');er.textContent='Anmeldung fehlgeschlagen: '+(e.message||e);er.style.display='block';}}
+function abmelden(){app.logoutPopup().then(()=>location.reload());}
+async function token(){const a=app.getActiveAccount();try{return(await app.acquireTokenSilent({...LR,account:a})).accessToken;}catch(e){return(await app.acquireTokenPopup(LR)).accessToken;}}
+async function laden(){
+  document.getElementById('lo').style.display='none';document.getElementById('db').style.display='block';
+  document.getElementById('page').innerHTML='<div class="empty">Lade Liste …</div>';
+  try{
+    const r=await fetch('https://graph.microsoft.com/v1.0/drives/'+DRIVE+'/root:/'+PFAD.split('/').map(encodeURIComponent).join('/')+':/content',{cache:'no-store',headers:{Authorization:'Bearer '+await token()}});
+    if(!r.ok)throw new Error(r.status===403||r.status===404?'Kein Zugriff auf die Liste. Bitte die Praxisleitung um Freigabe des Ordners „Theke“.':'Fehler '+r.status);
+    L=JSON.parse((await r.text()).replace(/^﻿/,''));
+    document.getElementById('stand').textContent='Stand '+new Date(L.stand).toLocaleString('de-DE',{dateStyle:'short',timeStyle:'short'});
+    zeigen();
+  }catch(e){document.getElementById('page').innerHTML='<div class="empty">'+esc(e.message||e)+'</div>';}
+}
+const STUFEN=[
+  ['persoenlich','Persönlich klären','Zahlungserinnerung und Mahnung sind raus, die Frist ist abgelaufen. Patient anrufen oder beim nächsten Termin ansprechen.','p-r'],
+  ['mahnung','1. Mahnung senden','Die Zahlungserinnerung ist raus, die Frist von 14 Tagen ist abgelaufen. In thevea oder Medifox die Mahnung drucken.','p-a'],
+  ['erinnerung','Zahlungserinnerung senden','Das Zahlungsziel von 4 Wochen ist überschritten. In thevea oder Medifox die Zahlungserinnerung drucken.','p-a'],
+  ['wartet','Frist läuft','Erinnerung oder Mahnung ist raus, die Frist läuft noch. Nichts zu tun.','p-n']
+];
+function zeigen(){
+  if(!L)return;const q=(document.getElementById('such').value||'').toLowerCase(),k=kv();
+  const orte=['Alle',...new Set(L.liste.map(x=>x.standort).concat(L.bezahlt_laut_bank.map(x=>x.standort)))];
+  document.getElementById('chips').innerHTML=orte.map(o=>`<button class="chip${o===ort?' a':''}" onclick="ort='${esc(o)}';zeigen()">${esc(o)}</button>`).join('');
+  const passt=x=>(ort==='Alle'||x.standort===ort)&&(!q||String(x.patient).toLowerCase().includes(q)||String(x.nr).toLowerCase().includes(q));
+  let h=`<section class="sec"><div class="sec-h"><h2>So geht's</h2><span class="sub">Zahlungsziel 4 Wochen · Erinnerung · nach 14 Tagen Mahnung · nach weiteren 14 Tagen persönlich</span></div><div class="tk-steps">`;
+  STUFEN.slice(0,3).reverse().forEach(([s,t,d])=>{h+=`<div class="tk-step"><b>${esc(t)} · ${L.liste.filter(x=>x.stufe===s&&passt(x)).length}</b>${esc(d)}</div>`;});
+  h+=`<div class="tk-step"><b>Laut Bank bezahlt · ${L.bezahlt_laut_bank.filter(passt).length}</b>Die Überweisung ist da, die Rechnung steht im System noch offen. Im System als bezahlt buchen.</div></div>`;
+  h+=`<p class="hint">Haken setzen, wenn erledigt. Die Haken gelten nur auf diesem Gerät. Gemahnt wird in thevea oder Medifox, damit die Stufe dort gespeichert ist. Die Liste wird dreimal täglich neu erstellt.${L.fehlende_namen?` Bei ${L.fehlende_namen} Medifox-Rechnungen fehlt der Patientenname noch, dort über die Rechnungsnummer suchen.`:''}</p></section>`;
+  STUFEN.forEach(([s,t,d,pc])=>{
+    const l=L.liste.filter(x=>x.stufe===s&&passt(x));if(!l.length)return;
+    h+=`<section class="sec"><div class="sec-h"><h2>${esc(t)}</h2><span class="sub">${l.length} Rechnung${l.length>1?'en':''} · ${eur(l.reduce((a,x)=>a+x.offen,0))}</span></div><div class="tbl-wrap"><table><thead><tr><th class="ck"></th><th>Patient</th><th>Rechnung</th><th>Art</th><th>Standort</th><th>Datum</th><th class="r">Überfällig</th><th class="r">Offen</th>${s==='wartet'?'<th>Frist bis</th>':''}</tr></thead><tbody>`;
+    l.forEach(x=>{const done=k[x.nr+'|'+s];h+=`<tr class="${done?'done':''}"><td class="ck"><input type="checkbox" ${done?'checked':''} onchange="erledigt('${esc(x.nr)}','${s}',this.checked)" title="erledigt"></td><td><b>${esc(x.patient||'—')}</b>${x.email?`<br><span class="c-m" style="font-size:12px">${esc(x.email)}</span>`:''}</td><td>${esc(x.nr)}<br><span class="c-m" style="font-size:12px">${esc(x.system)}</span></td><td>${esc(x.art)}</td><td class="c-m">${esc(x.standort)}</td><td>${dat(x.datum)}</td><td class="r tk-n"><span class="pill ${pc}">${x.tage} Tage</span></td><td class="r tk-n"><b>${eur(x.offen)}</b>${x.teilzahlung_bank?`<br><span class="c-m" style="font-size:12px">Teilzahlung ${eur(x.teilzahlung_bank)}</span>`:''}</td>${s==='wartet'?`<td>${dat(x.frist)}</td>`:''}</tr>`;});
+    h+='</tbody></table></div></section>';
+  });
+  const b=L.bezahlt_laut_bank.filter(passt);
+  if(b.length){h+=`<section class="sec"><div class="sec-h"><h2>Laut Bank bezahlt · im System ausbuchen</h2><span class="sub">${b.length} Rechnung${b.length>1?'en':''}</span></div><div class="tbl-wrap"><table><thead><tr><th class="ck"></th><th>Patient</th><th>Rechnung</th><th>Art</th><th>Standort</th><th>Rechnung vom</th><th>Überweisung am</th><th class="r">Betrag</th></tr></thead><tbody>`;
+    b.forEach(x=>{const done=k[x.nr+'|bank'];h+=`<tr class="${done?'done':''}"><td class="ck"><input type="checkbox" ${done?'checked':''} onchange="erledigt('${esc(x.nr)}','bank',this.checked)" title="im System gebucht"></td><td><b>${esc(x.patient||'—')}</b></td><td>${esc(x.nr)}<br><span class="c-m" style="font-size:12px">${esc(x.system)}</span></td><td>${esc(x.art)}</td><td class="c-m">${esc(x.standort)}</td><td>${dat(x.datum)}</td><td>${dat(x.bank_am)}</td><td class="r tk-n"><b>${eur(x.bank_betrag)}</b></td></tr>`;});
+    h+='</tbody></table></div></section>';}
+  if(!L.liste.some(passt)&&!b.length)h+='<section class="sec"><div class="empty">Keine offenen Rechnungen. 🎉</div></section>';
+  document.getElementById('page').innerHTML=h;
+}
+app.initialize().then(async()=>{const a=app.getAllAccounts();if(a.length){app.setActiveAccount(a[0]);await laden();}});
+</script>
+</body>
+</html>
