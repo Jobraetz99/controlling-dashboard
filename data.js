@@ -767,6 +767,7 @@ async function loadAll(){
       if(planAusKName){const planAusK=await getSheet(FILES.planK,planAusKName);if(planAusK)D.planK.ausgaben=parsePlanAusgaben(planAusK);}
     }catch(e){console.warn('Plan KIMOJO:',e);}
     try{if(D.planK.dashboard)D.planK.dashboard.gf=await planGfLaden(FILES.planK);}catch(e){}
+    try{if(D.planK.dashboard)D.planK.dashboard.std=await planStundenLaden(FILES.planK);}catch(e){}
 
     // Plan PHFIP
     try{
@@ -778,6 +779,7 @@ async function loadAll(){
       const planAusPName=(planPSheets||[]).find(s=>s.trim().toLowerCase()==='planausgaben');
       if(planAusPName){const planAusP=await getSheet(FILES.planP,planAusPName);if(planAusP)D.planP.ausgaben=parsePlanAusgaben(planAusP);}
     }catch(e){console.warn('Plan PHFIP:',e);}
+    try{if(D.planP.dashboard)D.planP.dashboard.std=await planStundenLaden(FILES.planP);}catch(e){}
 
     // Auslastung
     const auslKR=await auslKP;
@@ -3189,6 +3191,10 @@ async function dateiFuerJahr(id,jahr,drive){
 // Bereich ab der ersten gefüllten Spalte, deshalb wird die Namensspalte gesucht.
 function planGfLesen(rows){const g=Array(12).fill(0);(rows||[]).forEach(r=>{r=r||[];const j=[0,1,2].find(x=>/^(jo|kili)$/i.test(String(r[x]||'').trim()));if(j==null)return;for(let i=0;i<12;i++)g[i]+=parseFloat(r[j+2+i])||0;});return g;}
 async function planGfLaden(id){if(!id)return null;const n=(await getSheetNames(id).catch(()=>[])).find(s=>s.trim().toLowerCase()==='planausgaben');if(!n)return null;return planGfLesen(await getSheet(id,n).catch(()=>null));}
+// Abwesenheiten aus dem Blatt „Stundenkalkulation 20 Takt“ (Urlaub, Krankheit,
+// Fortbildungstage je Person und Jahr) für die Saisonverteilung im Planungsreiter.
+function planStundenLesen(rows){const o={};(rows||[]).forEach(r=>{r=r||[];const i=r.findIndex(v=>typeof v==='string'&&/urlaub|krankheit|fortbildung/i.test(v));if(i<0)return;const n=r.slice(i+1).find(v=>v!==''&&v!=null&&!isNaN(+v));if(n==null)return;const k=/urlaub/i.test(r[i])?'urlaub':/krank/i.test(r[i])?'krank':'fobi';if(o[k]==null)o[k]=+n;});return Object.keys(o).length?o:null;}
+async function planStundenLaden(id){if(!id)return null;const n=(await getSheetNames(id).catch(()=>[])).find(s=>/^stundenkalkulation/i.test(s.trim())&&!/ergo/i.test(s));if(!n)return null;return planStundenLesen(await getSheet(id,n).catch(()=>null));}
 // Planung eines anderen Jahres (Folgejahr für den Planungsreiter): nur das Dashboard-Blatt
 async function planJahrLaden(jahr){
   const out={};
@@ -3197,6 +3203,7 @@ async function planJahrLaden(jahr){
     const rows=await getSheet(id,'Dashboard '+jahr).then(r=>r||getSheet(id,'Dashboard')).catch(()=>null);
     if(rows)out[k]=parsePlanDashboard(rows);
     if(out[k]&&k==='K')out[k].gf=await planGfLaden(id).catch(()=>null);
+    if(out[k])out[k].std=await planStundenLaden(id).catch(()=>null);
   }
   return out;
 }
