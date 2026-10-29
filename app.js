@@ -728,7 +728,8 @@ function liqBetriebe(){return aS==='Alle'?['KIMOJO','PHFIP']:aS==='PF im Park'?[
 function liqKey(x){
   if(x.b<0&&!x.n&&/sammel/i.test(x.t))return'-sammel';
   const n=String(x.n||x.t||'').toLowerCase().replace(/[^a-zäöüß ]/g,' ').replace(/\b(gmbh|eg|ag|kg|ev|mbh|und|co|se|ug)\b/g,' ').replace(/\s+/g,' ').trim().split(' ').slice(0,3).join(' ');
-  return(x.b>0?'+':'-')+(n||'?');
+  // Sozialversicherung: Kassen ändern den Namen (BARMER → BARMER Hauptverwaltung), erstes Wort reicht
+  return(x.b>0?'+':'-')+(bankKat(x)==='sv'?n.split(' ')[0]:n||'?');
 }
 function liqIntern(x,betriebe,eigene){
   if(x.pIban&&eigene.has(x.pIban))return true;
@@ -744,6 +745,87 @@ function liqFixkosten(betriebe,H){
     const aus=-H.filter(x=>x.b<0).reduce((t,x)=>t+x.b,0)/3;return{wert:aus,det:[],quelle:'Auszahlungen ø Monat (Bank, 13 Wochen)'};}
   return{wert,det,quelle:'BWA: Gesamtkosten ohne Abschreibungen, ø '+(det[0]?det[0].ms.join(', '):'')};
 }
+// ── Einzahlungen aus Abrechnung und Terminkalender ───────────────────────
+// Statt der Bankhistorie kommen die Einnahmen aus Behandlungen aus vier Quellen:
+//  1. abgerechnet, offen: Rechnungsdatum + Zahlungsziel (28 Tage). Überfällige bis
+//     90 Tage kommen in den nächsten zwei Wochen, ältere gelten als zweifelhaft.
+//     thevea-Kassenabrechnung: abgerechnet (netto) minus Eingänge von opta data.
+//  2. erbracht, noch nicht abgerechnet: Abrechnung im üblichen Abstand, dann Zahlungsziel
+//  3. Terminkalender: Termin + Abrechnungsabstand + Zahlungsziel, mal Realisierungsquote
+//  4. nach dem Ende des Kalenders: Ø erbrachter Wert je Werktag der letzten 8 Wochen
+const LIQ_ZAHLZIEL=28,LIQ_ABRECHNUNG={KIMOJO:14,PHFIP:28},LIQ_QUOTE=0.9,LIQ_ZWEIFEL=90;
+const LIQ_PL={re_k:'Abgerechnet: Kassen und BG',re_p:'Abgerechnet: Zuzahlung und Privat',erb:'Erbracht, noch nicht abgerechnet',kal:'Terminkalender',hoch:'Auffüllung auf Ø der letzten 8 Wochen'};
+const LIQ_RE_NR=/\b(re|rechnung|rg|rnr|rech)\b|[A-Z]{1,3}-?20\d\d-\d+|\b20\d\d-\d{3,6}\b/i;
+// Bankeingänge, die die Abrechnungssicht ersetzt (Kassen, BG, Patientenrechnungen)
+function liqIstLeistung(x){if(x.b<=0)return false;const k=bankKat(x);return k==='kassen'||k==='bg'||(k==='sonst'&&LIQ_RE_NR.test(x.z));}
+function liqBetriebVonSite(s){return s==='PF im Park'?'PHFIP':'KIMOJO';}
+// thevea-Kassenabrechnung (über opta data): abgerechnet netto minus Eingänge von opta data
+function liqTheveaKassenOffen(stand){
+  const rows=(D.abg&&D.abg.rows)||[],abgN=rows.reduce((t,r)=>t+(r.netto||0),0),erst=rows.map(r=>r.ym).sort()[0];
+  if(!erst)return{offen:0,abg:0,ein:0};const ab=new Date(erst+'-01T00:00:00Z');
+  const ein=(D.konten||[]).filter(k=>k.betrieb==='KIMOJO').flatMap(k=>k.tx).filter(x=>x.b>0&&/opta data/i.test(x.n)&&x.d>=ab&&(!stand||x.d<=stand)).reduce((t,x)=>t+x.b,0);
+  return{offen:Math.max(0,abgN-ein),abg:abgN,ein};
+}
+function liqPipeline(betrieb,stand,ende){
+  const ev=[],info={offen:{re_k:0,re_p:0},zweifel:0,zweifelN:0,erb:0,kal:0,kalBis:null,hochTag:0};
+  const hs=liqTag(stand);
+  const plus=(d,n)=>liqPlus(d,n),dat=s=>{const d=bankDatum(s);return d?liqTag(d):null;};
+  const add=(d,b,k)=>{if(b)ev.push({d,b,k});};
+  const verteile=(von,tage,b,k)=>{const ds=[];for(let i=0;i<tage;i++){const d=plus(von,i);if(liqWerktag(d))ds.push(d);}ds.forEach(d=>add(d,b/ds.length,k));};
+  // Nur noch nicht fällige Rechnungen zählen. Überfällige sind oft schon bezahlt, aber im
+  // System nicht ausgebucht (Medifox Juli/August), sie stehen getrennt zur Prüfung.
+  const offeneRechnung=(datum,betrag,k)=>{
+    if(!datum||betrag<=0.005)return;const f=plus(datum,LIQ_ZAHLZIEL);
+    if(f<=hs){info.zweifel+=betrag;info.zweifelN++;return;}
+    info.offen[k]+=betrag;add(f,betrag,k);
+  };
+  // 1a Medifox-Rechnungsübersicht (KIMOJO vor dem Cutover, PF im Park)
+  const pre=betrieb==='PHFIP'?'PHFIP':'KIMOJO';
+  ((D.rechnungen&&D.rechnungen.alle)||[]).forEach(r=>{
+    if(r.prefix!==pre||r.storniert||/mahnung/i.test(r.belegtyp)||/mahnung/i.test(r.typ)||!(r.saldo>0))return;
+    offeneRechnung(dat(r.datum),r.saldo,(r.typ==='Kasse'||r.typ==='BG')?'re_k':'re_p');
+  });
+  if(betrieb==='KIMOJO'){
+    // 1b thevea Zuzahlungs- und Privatrechnungen
+    ((D.re&&D.re.rows)||[]).forEach(r=>{if(r.storno)return;offeneRechnung(dat(r.datum),r.brutto-(r.bezahlt||0),'re_p');});
+    // 1c thevea-Kassenabrechnung über opta data: abgerechnet minus bereits eingegangen
+    const tk=liqTheveaKassenOffen(stand);info.offen.re_k+=tk.offen;verteile(plus(hs,1),30,tk.offen,'re_k');
+    info.optaAbg=tk.abg;info.optaEin=tk.ein;
+  }
+  // 2–4 Behandlungen aus dem Kalender
+  const pad=k=>{const p=String(k).split('-');return p.length===3?p[0]+'-'+p[1].padStart(2,'0')+'-'+p[2].padStart(2,'0'):k;};
+  const tag=r=>r.src==='thevea'?(r.datum?liqTag(new Date(r.datum)):null):(r.dateKey?dat(pad(r.dateKey)):null);
+  const vor90=plus(hs,-LIQ_ZWEIFEL),vor56=plus(hs,-56);let tvErb=0,erb56=0,maxKal=null,mfOffen=0;const plan={};
+  D.raw.forEach(r=>{
+    if(liqBetriebVonSite(rowSite(r))!==betrieb||tvIstKurs(r)||r.kind==='ausfall')return;
+    const d=tag(r);if(!d)return;const p=r.price||0;
+    if(d<=hs){
+      if(r.kind==='reserviert'||r.kind==='offen')return;
+      if(d>vor56)erb56+=p;
+      if(r.src==='thevea'){tvErb+=p;return;}
+      if(!r.billed&&d>vor90)mfOffen+=p;
+      return;
+    }
+    if(!maxKal||d>maxKal)maxKal=d;const k=d.toISOString().slice(0,10);plan[k]=(plan[k]||0)+p;
+  });
+  let offen=mfOffen;
+  if(betrieb==='KIMOJO'){const abgB=((D.abg&&D.abg.rows)||[]).reduce((t,r)=>t+(r.brutto||0),0);offen+=Math.max(0,tvErb-abgB);}
+  const wt56=[...Array(56)].map((_,i)=>plus(hs,-i)).filter(liqWerktag).length||40;
+  info.hochTag=erb56/wt56;info.kalBis=maxKal;info.erb=offen;
+  // Abrechnungsabstand aus dem Rückstand: so viele Tage Leistung warten auf die Abrechnung
+  const L=Math.round(Math.min(42,Math.max(14,info.hochTag?offen/info.hochTag*7/5:LIQ_ABRECHNUNG[betrieb]||21)));info.abstand=L;
+  verteile(plus(hs,LIQ_ZAHLZIEL),L,offen,'erb');
+  // Zukunft: je Tag geplanter Wert (90 %), mindestens der Ø der letzten 8 Wochen
+  for(let d=plus(hs,1);plus(d,L+LIQ_ZAHLZIEL)<=ende;d=plus(d,1)){
+    const k=d.toISOString().slice(0,10),pv=(plan[k]||0)*LIQ_QUOTE,f=plus(d,L+LIQ_ZAHLZIEL);
+    if(!liqWerktag(d)){if(pv)add(f,pv,'kal');continue;}
+    add(f,pv,'kal');
+    if(info.hochTag>pv)add(f,info.hochTag-pv,'hoch');
+    info.kal+=pv;
+  }
+  return{ev,info};
+}
+
 function liqPrognose(betriebe){
   const konten=(D.konten||[]).filter(k=>betriebe.includes(k.betrieb)&&k.saldoDatum);
   if(!konten.length)return null;
@@ -751,7 +833,7 @@ function liqPrognose(betriebe){
   const stand=liqTag(konten.reduce((m,k)=>!m||k.saldoDatum>m?k.saldoDatum:m,null));
   const start=konten.reduce((t,k)=>t+(k.saldo||0),0),kredit=konten.reduce((t,k)=>t+(k.kreditlinie||0),0);
   const von91=liqPlus(stand,-91),von183=liqPlus(stand,-183);
-  const H=konten.flatMap(k=>k.tx.filter(x=>x.d>von183&&x.d<=stand).map(x=>Object.assign({_b:k.betrieb},x))).filter(x=>!liqIntern(x,betriebe,eigene));
+  const H=konten.flatMap(k=>k.tx.filter(x=>x.d>von183&&x.d<=stand).map(x=>Object.assign({_b:k.betrieb},x))).filter(x=>!liqIntern(x,betriebe,eigene)&&!liqIstLeistung(x));
   const H91=H.filter(x=>x.d>von91);
   const w0=liqMontag(stand),wochen=[...Array(LIQ_WOCHEN)].map((_,i)=>({von:liqPlus(w0,7*i),bis:liqPlus(w0,7*i+6),ein:0,aus:0,kat:{ein:{},aus:{}}}));
   const ende=wochen[LIQ_WOCHEN-1].bis,met={},termine=[],einmal=[];
@@ -786,9 +868,11 @@ function liqPrognose(betriebe){
       const g=Math.round(liqMedian(gaps));
       // neu begonnene Monatszahlung: zwei Monate in Folge, gleicher Betrag (±10 %)
       const l2=l.filter(x=>!gross(x)),neuMonat=dm===2&&g===1&&l2.length===2&&Math.abs(l2[1].b-l2[0].b)<=Math.abs(l2[0].b)*0.1;
-      if(((g===1&&(dm>=3||neuMonat))||((g===2||g===3)&&dm>=2))&&gaps.filter(x=>x===g).length>=Math.ceil(gaps.length*0.6)){
+      // zwei- oder dreimonatlich mit nur zwei Zahlungen nur bei ähnlichem Betrag (±20 %), sonst sind es meist Teilrechnungen
+      const aehnlich=dm>2||(l2.length>=2&&Math.abs(l2[l2.length-1].b-l2[l2.length-2].b)<=Math.abs(l2[l2.length-2].b)*0.2);
+      if(((g===1&&(dm>=3||neuMonat))||((g===2||g===3)&&dm>=2&&aehnlich))&&gaps.filter(x=>x===g).length>=Math.ceil(gaps.length*0.6)){
         if(liqMI(stand)-liqMI(last.d)>g+1)return;// beendet
-        const lr=l.filter(x=>!gross(x)),l3=(lr.length?lr:l).slice(-3),betr=liqMedian(l3.map(x=>x.b)),tag=Math.round(liqMedian(l3.map(x=>x.d.getUTCDate())));
+        const lr=l.filter(x=>!gross(x)),l3=(lr.length?lr:l).slice(-3),betr=kat==='gehalt'?l3[l3.length-1].b:liqMedian(l3.map(x=>x.b)),tag=Math.round(liqMedian(l3.map(x=>x.d.getUTCDate())));
         l.filter(x=>x.d>von91&&gross(x)&&lr.length).forEach(x=>einmal.push(Object.assign({kat,grund:'Einzelbetrag ab '+eur0(grenze)},x)));
         for(let mi=liqMI(last.d)+g;;mi+=g){
           const y=Math.floor(mi/12),mo=mi%12,ml=new Date(Date.UTC(y,mo+1,0)).getUTCDate();let d=new Date(Date.UTC(y,mo,Math.min(tag,ml)));
@@ -804,14 +888,16 @@ function liqPrognose(betriebe){
     l.filter(x=>x.d>von91).forEach(x=>{if(person){nieFort(x);return;}if(invest){einmal.push(Object.assign({kat,grund:'Investition'},x));return;}if(gross(x)){einmal.push(Object.assign({kat,grund:'Einzelbetrag ab '+eur0(grenze)},x));return;}const k=(x.b>0?'ein':'aus')+'|'+kat;rest[k]=(rest[k]||0)+x.b;});
   });
   Object.entries(rest).forEach(([k,s])=>{const kat=k.split('|')[1],t=s/werktageVor;kuenftigeWerktage.forEach(d=>buche(d,t,kat,'Durchschnitt'));});
+  // Einnahmen aus Behandlungen: Abrechnung und Terminkalender je Betrieb
+  const pl={};betriebe.forEach(b=>{const x=liqPipeline(b,stand,ende);pl[b]=x.info;x.ev.forEach(e=>buche(e.d,e.b,LIQ_PL[e.k],e.k));});
   let lauf=start;wochen.forEach(w=>{w.anfang=lauf;lauf+=w.ein+w.aus;w.ende=lauf;});
   const tief=wochen.reduce((m,w)=>!m||w.ende<m.ende?w:m,null);
   const fix=liqFixkosten(betriebe,H91);
-  return{betriebe,konten,stand,start,kredit,wochen,tief,fix,termine:termine.sort((a,b)=>a.d-b.d),met:Object.values(met),einmal:einmal.sort((a,b)=>Math.abs(b.b)-Math.abs(a.b)),grenze,alter:Math.round((liqHeute()-stand)/LIQ_TAG)};
+  return{betriebe,konten,stand,start,kredit,wochen,tief,fix,pl,termine:termine.sort((a,b)=>a.d-b.d),met:Object.values(met),einmal:einmal.sort((a,b)=>Math.abs(b.b)-Math.abs(a.b)),grenze,alter:Math.round((liqHeute()-stand)/LIQ_TAG)};
 }
 const liqStatus=(v,fix)=>v<0?'<span class="pill p-r">Unterdeckung</span>':v<fix?'<span class="pill p-a">unter Mindestbestand</span>':'<span class="pill p-g">ausreichend</span>';
 const liqName=bs=>bs.length>1?'BM Group':LIQ_BETRIEB[bs[0]].l;
-const LIQ_ART={wiederkehrend:'feste Termine',laufend:'laufend je Werktag',Durchschnitt:'ø der letzten 13 Wochen'};
+const LIQ_ART={wiederkehrend:'feste Termine',laufend:'laufend je Werktag',Durchschnitt:'ø der letzten 13 Wochen',re_k:'Rechnungsdatum + 28 Tage',re_p:'Rechnungsdatum + 28 Tage',erb:'nächste Abrechnung + 28 Tage',kal:'Termin + Abrechnung + 28 Tage, 90 %',hoch:'Tage mit weniger Terminen als üblich'};
 function liqVorschau(){
   const bs=liqBetriebe(),P=liqPrognose(bs);
   if(!P)return`<section class="sec"><div class="sec-h"><h2>Liquiditätsvorschau</h2></div><div class="empty">Für ${esc(liqName(bs))} liegen noch keine Kontodaten vor.</div></section>`;
@@ -837,7 +923,8 @@ function liqVorschau(){
   h+=`<div class="kpi"><div class="l">Erbracht, nicht abgerechnet</div><div class="v c-a">${eur0(R.offSum)}</div><div class="s">Leistungen bis heute ohne Rechnung</div></div>`;
   h+=`<div class="kpi"><div class="l">Liquiditätsreserve</div><div class="v">${eur0(res)}</div><div class="s">Kontostand + Forderungen + Unabgerechnet</div></div>`;
   h+='</div>';
-  h+='<p class="hint">Forderungen und unabgerechnete Leistungen sind nicht in der Wochenvorschau enthalten: Die Zahlungen der Kassen stecken dort schon über den Durchschnitt der letzten Wochen. Einzelheiten stehen unter dem Wochenverlauf.</p>';
+  const plI=Object.values(P.pl||{}),zw=plI.reduce((t,i)=>t+(i.zweifel||0),0),zwN=plI.reduce((t,i)=>t+(i.zweifelN||0),0);
+  h+=`<p class="hint">Forderungen, unabgerechnete Leistungen und der Terminkalender stecken in der Wochenvorschau: Rechnungen kommen 28 Tage nach Rechnungsdatum, Leistungen nach der nächsten Abrechnung plus 28 Tage.${zw?` Nicht eingerechnet sind ${n0(zwN)} überfällige Rechnungen über ${eur0(zw)}: Sie sind oft schon bezahlt und im System nicht ausgebucht, der Abgleich mit der Bank folgt mit der Mahnliste.`:''} Einzelheiten stehen unter dem Wochenverlauf.</p>`;
   h+='<div style="margin-top:14px">'+linienChart(w.map(kwL),[{col:'var(--primary)',vals:w.map(x=>x.ende)},{col:'var(--amber)',vals:w.map(()=>fix),dash:true}].concat(P.kredit?[{col:'var(--red)',vals:w.map(()=>-P.kredit),dash:true}]:[]))+'</div>';
   h+=`<p class="hint">Linie: Kontostand am Wochenende. Gestrichelt: Mindestbestand${P.kredit?' und Grenze der Kreditlinie':''}.</p>`;
   // Wochentabelle
@@ -857,7 +944,7 @@ function liqVorschau(){
   // Zusammensetzung
   const zeile=sd=>P.met.filter(m=>m.sd===sd).sort((a,b)=>Math.abs(b.summe)-Math.abs(a.summe)).map(m=>`<tr><td>${esc(katName(sd,m.kat))}</td><td class="r ${sd==='ein'?'c-g':'c-r'}"><b>${eur0(m.summe)}</b></td><td class="r">${eur0(m.summe/LIQ_WOCHEN)}</td><td class="c-m">${Object.entries(m.art).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).map(([a])=>LIQ_ART[a]).join(', ')}</td></tr>`).join('');
   h+=`<section class="sec"><div class="sec-h"><h2>Woraus die Vorschau besteht</h2><span class="sub">${LIQ_WOCHEN} Wochen je Kategorie</span></div><div class="tbl-wrap"><table><thead><tr><th>Kategorie</th><th class="r">${LIQ_WOCHEN} Wochen</th><th class="r">ø Woche</th><th>Herleitung</th></tr></thead><tbody><tr class="sum"><td colspan="4">Einzahlungen</td></tr>${zeile('ein')}<tr class="sum"><td colspan="4">Auszahlungen</td></tr>${zeile('aus')}</tbody></table></div>`;
-  h+=`<p class="hint">Grundlage sind die Bankbuchungen der letzten sechs Monate bis ${fDatU(P.stand)}. Feste Termine: gleicher Zahlungsbeteiligter mindestens dreimal monatlich (neue Verträge: zweimal in Folge mit gleichem Betrag) oder zweimal im Zwei- bis Dreimonatsrhythmus, Betrag als Median der letzten drei Zahlungen. Laufend: Zahler mit mehreren Buchungen je Monat, verteilt auf die Werktage. Alles Übrige als Durchschnitt der letzten 13 Wochen. Nicht fortgeschrieben werden einzelne Auszahlungen ab ${eur0(P.grenze)} (außer Gehältern und Sozialversicherung), Investitionen ohne festen Rhythmus, Umbuchungen zwischen eigenen Konten und Betrieben, Einlagen und Steuererstattungen. Zahlungen an Gesellschafter zählen nur, wenn sie in festem Rhythmus kommen.</p></section>`;
+  h+=`<p class="hint">Einnahmen aus Behandlungen: noch nicht fällige Rechnungen zum Rechnungsdatum + 28 Tage (überfällige zählen nicht), die thevea-Kassenabrechnung als abgerechnet minus Eingänge von opta data, verteilt auf 30 Tage, erbrachte und noch nicht abgerechnete Leistungen ab der nächsten Abrechnung + 28 Tage, der Terminkalender mit 90 % seines Werts zum Termin + Abrechnungsabstand + 28 Tage, und Tage mit weniger Terminen als üblich aufgefüllt auf den Ø der letzten 8 Wochen. ${Object.entries(P.pl||{}).map(([b,i])=>`${LIQ_BETRIEB[b].l}: Abrechnungsabstand ${i.abstand} Tage, Kalender bis ${i.kalBis?fDatU(i.kalBis):'—'}, Ø ${eur0(i.hochTag)} je Werktag.`).join(' ')} Alle übrigen Zahlungen aus den Bankbuchungen der letzten sechs Monate bis ${fDatU(P.stand)}. Feste Termine: gleicher Zahlungsbeteiligter mindestens dreimal monatlich (neue Verträge: zweimal in Folge mit gleichem Betrag) oder zweimal im Zwei- bis Dreimonatsrhythmus, Betrag als Median der letzten drei Zahlungen. Laufend: Zahler mit mehreren Buchungen je Monat, verteilt auf die Werktage. Alles Übrige als Durchschnitt der letzten 13 Wochen. Nicht fortgeschrieben werden einzelne Auszahlungen ab ${eur0(P.grenze)} (außer Gehältern und Sozialversicherung), Investitionen ohne festen Rhythmus, Umbuchungen zwischen eigenen Konten und Betrieben, Einlagen und Steuererstattungen. Zahlungen an Gesellschafter zählen nur, wenn sie in festem Rhythmus kommen.</p></section>`;
   // Feste Termine
   const TMIN=500,tGross=P.termine.filter(t=>Math.abs(t.b)>=TMIN),tKlein=P.termine.length-tGross.length;
   if(tGross.length){
@@ -895,6 +982,7 @@ function liqReserve(){
   const R=D.rechnungen||{byPT:{}};const pts=Object.values(R.byPT||{}).filter(x=>ents.some(e=>e.pre===x.prefix));
   const medifoxFord=pts.reduce((t,x)=>t+x.saldo,0),medifoxN=pts.reduce((t,x)=>t+x.count,0);
   const reOffen={};((D.re&&D.re.rows)||[]).forEach(r=>{if(r.storno||!matchS(r.standort))return;const off=r.brutto-r.bezahlt;if(off<=0.005)return;const a=reOffen[r.artName]||(reOffen[r.artName]={n:0,offen:0});a.n++;a.offen+=off;});
+  const tvK=ents.some(e=>e.pre==='KIMOJO')?liqTheveaKassenOffen():{offen:0};if(tvK.offen>0)reOffen['Kassen über opta data (abgerechnet minus Eingang)']={n:0,offen:tvK.offen};
   const theveaFord=Object.values(reOffen).reduce((t,x)=>t+x.offen,0),theveaN=Object.values(reOffen).reduce((t,x)=>t+x.n,0);
   const ford=medifoxFord+theveaFord;
   // Stufe 3: Unabgerechnet
@@ -906,7 +994,7 @@ function liqReserve(){
   const mxF=Math.max(...pts.map(x=>x.saldo),...Object.values(reOffen).map(x=>x.offen),1);
   pts.sort((a,b)=>b.saldo-a.saldo).forEach(x=>{const e=BANK_ENT.find(e=>e.pre===x.prefix);h+=`<tr><td class="c-m">Medifox</td><td><span class="site"><span class="dot" style="background:${e.col}"></span>${esc(e.l)}</span></td><td>${esc(x.typ)}</td><td class="r">${n0(x.count)}</td><td class="r"><b>${eur0(x.saldo)}</b></td><td><div class="bar"><i style="width:${x.saldo/mxF*100}%;background:var(--blue)"></i></div></td></tr>`;});
   Object.entries(reOffen).sort((a,b)=>b[1].offen-a[1].offen).forEach(([art,x])=>{h+=`<tr><td class="c-m">thevea</td><td><span class="site"><span class="dot" style="background:var(--primary)"></span>KIMOJO GmbH</span></td><td>${esc(art)}</td><td class="r">${n0(x.n)}</td><td class="r"><b>${eur0(x.offen)}</b></td><td><div class="bar"><i style="width:${x.offen/mxF*100}%;background:var(--blue)"></i></div></td></tr>`;});
-  h+=`<tr class="sum"><td colspan="3">Summe</td><td class="r">${n0(medifoxN+theveaN)}</td><td class="r">${eur0(ford)}</td><td></td></tr></tbody></table></div><p class="hint">Medifox: Rechnungen mit offenem Saldo aus der Rechnungsübersicht (Nummern mit „K-“ gehören zu Kitzingen, ohne Präfix zu KIMOJO vor dem Cutover). thevea: nicht stornierte Rechnungen mit Restbetrag (Betrag minus Zahlungseingang). Kassenabrechnungen über thevea erscheinen hier noch nicht.</p></section>`;
+  h+=`<tr class="sum"><td colspan="3">Summe</td><td class="r">${n0(medifoxN+theveaN)}</td><td class="r">${eur0(ford)}</td><td></td></tr></tbody></table></div><p class="hint">Medifox: Rechnungen mit offenem Saldo aus der Rechnungsübersicht (Nummern mit „K-“ gehören zu Kitzingen, ohne Präfix zu KIMOJO vor dem Cutover). thevea: nicht stornierte Rechnungen mit Restbetrag (Betrag minus Zahlungseingang). thevea-Kassen: in thevea abgerechnete Verordnungen (ohne Zuzahlung) minus Eingänge von opta data auf dem KIMOJO-Konto. Überfällige Rechnungen sind häufig schon bezahlt und nur nicht ausgebucht, in der Vorschau zählen nur noch nicht fällige.</p></section>`;
   const htmlFord=h;h='';
   // III Unabgerechnet
   const offE=Object.entries(off).sort((a,b)=>b[1].offen-a[1].offen);const mxO=Math.max(...offE.map(x=>x[1].offen),1);
