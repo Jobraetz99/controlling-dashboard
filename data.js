@@ -755,6 +755,7 @@ async function loadAll(){
     try{await reLaden();}catch(e){console.warn('Rechnungen:',e);D.re={rows:[],stand:{}};}
 
     lt.textContent='Verarbeite Planungen...';
+    try{D.planNext=await planJahrLaden(cockpitJahr()+1);D.planNext.jahr=cockpitJahr()+1;}catch(e){console.warn('Plan Folgejahr:',e);D.planNext=null;}
     // Plan KIMOJO
     try{
       const planDashK=await planDashKP;
@@ -2383,8 +2384,8 @@ function parsePlanDashboard(rows){
   }
   for(const r of rows){
     const label=String(r[labelCol]||'').trim();
-    if(label==='Club 26'||label==='Plan 25 Club'||label==='Plan 26 Club')section='club';
-    if(label==='Therapie 26'||label==='Plan 26 Therapie')section='therapie';
+    if(/club/i.test(label)&&/\d/.test(label))section='club';
+    if(/therapie/i.test(label)&&/\d/.test(label))section='therapie';
     if(label==='Plankosten'){
       for(let i=0;i<12;i++){plan[section]['kosten_'+MN[i]]=Math.abs(parseFloat(r[dataStart+i])||0);}
     }
@@ -3131,9 +3132,25 @@ async function dateiFuerJahr(id,jahr,drive){
     const it=await gql('https://graph.microsoft.com/v1.0/drives/'+drive+'/items/'+id+'?$select=name,parentReference');
     if(!it||!it.name||it.name.indexOf(String(DATEI_JAHR_BASIS))<0)return null;
     const nn=it.name.split(String(DATEI_JAHR_BASIS)).join(String(jahr));
-    const x=await gql('https://graph.microsoft.com/v1.0/drives/'+drive+'/items/'+it.parentReference.id+':/'+encodeURIComponent(nn));
-    return x&&x.id||null;
+    const x=await gql('https://graph.microsoft.com/v1.0/drives/'+drive+'/items/'+it.parentReference.id+':/'+encodeURIComponent(nn)).catch(()=>null);
+    if(x&&x.id)return x.id;
+    // Planungen liegen je Jahr in einem eigenen Ordner (…/Finanzen/2026, …/Finanzen/2027):
+    // dann im Nachbarordner mit dem Jahr als Namen suchen
+    const pa=await gql('https://graph.microsoft.com/v1.0/drives/'+drive+'/items/'+it.parentReference.id+'?$select=name,parentReference');
+    if(!pa||String(pa.name).trim()!==String(DATEI_JAHR_BASIS)||!pa.parentReference)return null;
+    const y=await gql('https://graph.microsoft.com/v1.0/drives/'+drive+'/items/'+pa.parentReference.id+':/'+encodeURIComponent(String(jahr))+'/'+encodeURIComponent(nn)).catch(()=>null);
+    return y&&y.id||null;
   }catch(e){return null;}
+}
+// Planung eines anderen Jahres (Folgejahr für den Planungsreiter): nur das Dashboard-Blatt
+async function planJahrLaden(jahr){
+  const out={};
+  for(const [k,basis] of [['K',DATEIEN_BASIS.planK],['P',DATEIEN_BASIS.planP]]){
+    const id=await dateiFuerJahr(basis,jahr,driveId);if(!id)continue;
+    const rows=await getSheet(id,'Dashboard '+jahr).then(r=>r||getSheet(id,'Dashboard')).catch(()=>null);
+    if(rows)out[k]=parsePlanDashboard(rows);
+  }
+  return out;
 }
 async function dateienAufJahrStellen(){
   const j=cockpitJahr(),fj=FILES_JAHR[j]||{};D.dateienJahr={jahr:j,fehlt:[]};

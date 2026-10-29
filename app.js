@@ -7,7 +7,7 @@ const PAGES=[
   {id:'uebersicht',l:'Übersicht'},
   {id:'erbracht',l:'Erbracht'},
   {id:'abgerechnet',l:'Abgerechnet'},
-  {id:'vorschau',l:'Jahresvorschau'},
+  {id:'vorschau',l:'Planung'},
   {id:'planist',l:'Plan vs. Ist'},
   {id:'auslastung',l:'Auslastung'},
   {id:'termine',l:'Terminvergabe'},
@@ -1114,7 +1114,85 @@ function vorschauDaten(){
     return{m,i,isCurrent:i===cur,useIst,hasIst,ist,plan:p,fc:{ein:useIst?ein:p.ein,kosten:useIst?kosten:p.kosten,gewinn:useIst?gewinn:p.gewinn,erbracht:useIst?(ist.erbracht||ein):p.ein}};
   });
 }
+// ── Planung: laufendes Jahr rollierend (Ist + Plan) oder Folgejahr (Plan) ──
+let planJahrSicht=null;
+function setPJ(j){planJahrSicht=j;rPage();}
+// Planblöcke je Betrieb und Bereich aus einem Dashboard-Plan ({therapie,club}),
+// nach Standortfilter. Gewinn = Einnahmen − Kosten wie im Planblatt.
+function planBloecke(dK,dP){
+  const kim=aS==='Alle'||aS==='KIMOJO Gesamt'||aS==='KIMOJO Physio'||aS==='KIMOJO Ergo',pf=aS==='Alle'||aS==='PF im Park';
+  const out=[];
+  [[dK,'KIMOJO',kim],[dP,'PF im Park',pf]].forEach(([d,l,an])=>{if(!an||!d)return;
+    ['therapie','club'].forEach(b=>{const x=d[b]||{};const ein=MN.map(m=>x['einnahmen_'+m]||0),kos=MN.map(m=>x['kosten_'+m]||0),pers=MN.map(m=>x['personal_'+m]||0);
+      if(!ein.some(v=>v)&&!kos.some(v=>v))return;
+      out.push({betrieb:l,bereich:b,ein,kos,gew:ein.map((v,i)=>v-kos[i]),pers});});});
+  return out;
+}
+const PL_BEREICH={therapie:'Therapie',club:'Club'};
+const sumA=a=>a.reduce((t,v)=>t+v,0);
+function planJahrSchalter(j0,jN,sicht){
+  const b=(j,l,ok)=>`<button class="${sicht===j?'a':''}" ${ok?`onclick="setPJ(${j})"`:'disabled style="opacity:.45;cursor:default"'}>${l}</button>`;
+  return`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px"><div class="seg">${b(j0,j0+' · Ist + Plan',true)}${b(j0+1,(j0+1)+' · Plan',!!jN)}</div>${jN?'':`<span class="c-m" style="font-size:12.5px">Keine Planung ${j0+1} gefunden (Datei „… ${j0+1} …“ im Ordner Finanzen/${j0+1} oder neben der Planung ${j0}).</span>`}</div>`;
+}
 function pVorschau(){
+  const N=D.planNext,jN=N&&(N.K||N.P)?N.jahr:null,j0=cockpitJahr();
+  const sicht=planJahrSicht===jN&&jN?jN:j0;
+  return planJahrSchalter(j0,jN,sicht)+(sicht===jN?pPlanFolgejahr():pVorschauJahr());
+}
+// Folgejahr: nur Plan, verglichen mit dem Plan des laufenden Jahres (gleicher Aufbau:
+// Therapie- und Club-Block je Betrieb).
+function pPlanFolgejahr(){
+  const N=D.planNext,j=N.jahr,B=planBloecke(N.K,N.P),V=planBloecke(D.planK.dashboard,D.planP.dashboard);
+  if(!B.length)return'<section class="sec"><div class="empty">Für die aktuelle Auswahl gibt es keine Planung '+j+'.</div></section>';
+  const S=(L,k)=>MN.map((_,i)=>L.reduce((t,x)=>t+x[k][i],0));
+  const ein=S(B,'ein'),kos=S(B,'kos'),gew=S(B,'gew'),vEin=S(V,'ein'),vKos=S(V,'kos'),vGew=S(V,'gew');
+  const tE=sumA(ein),tK=sumA(kos),tG=sumA(gew),vE=sumA(vEin),vK=sumA(vKos),vG=sumA(vGew);
+  const club=B.filter(x=>x.bereich==='club'),tClub=sumA(S(club,'ein'));
+  const pers=sumA(S(B.filter(x=>x.bereich==='therapie'),'pers')),persBasis=sumA(S(B.filter(x=>x.bereich==='therapie'&&x.pers.some(v=>v)),'ein'));
+  const vgl=(a,b)=>b?`<span class="pill ${a>=b?'p-g':'p-r'}">${a>=b?'+':''}${n1((a-b)/Math.abs(b)*100)} %</span> zum Plan ${j-1}`:'';
+  const vglK=(a,b)=>b?`<span class="pill ${a<=b*1.0001?'p-g':'p-n'}">${a>=b?'+':''}${n1((a-b)/Math.abs(b)*100)} %</span> zum Plan ${j-1}`:'';
+  let h=`<section class="sec"><div class="sec-h"><h2>Planung ${j}</h2><span class="sub">Finanzplanungen ${j} · ${esc(sn(aS))}</span></div><div class="grid">`;
+  h+=`<div class="kpi big"><div class="l">Einnahmen ${j}</div><div class="v">${fmK(tE)}</div><div class="s">${vgl(tE,vE)}</div><div class="s">davon Club <b>${fmK(tClub)}</b> (${n0(tE?tClub/tE*100:0)} %)</div></div>`;
+  h+=`<div class="kpi big"><div class="l">Kosten ${j}</div><div class="v">${fmK(tK)}</div><div class="s">${vglK(tK,vK)}</div>${pers?`<div class="s">Personal KIMOJO Therapie <b>${fmK(pers)}</b> · ${n0(persBasis?pers/persBasis*100:0)} % der Einnahmen</div>`:''}</div>`;
+  h+=`<div class="kpi big"><div class="l">Gewinn ${j}</div><div class="v ${tG>=0?'c-g':'c-r'}">${fmK(tG)}</div><div class="s">${vgl(tG,vG)}</div></div>`;
+  h+=`<div class="kpi big"><div class="l">Marge ${j}</div><div class="v">${pctS(tE?tG/tE*100:null)}</div><div class="s">Plan ${j-1}: <b>${pctS(vE?vG/vE*100:null)}</b></div></div>`;
+  h+='</div></section>';
+  // Je Betrieb und Bereich
+  const zeile=(l,e,k,ve,fett)=>{const g=e-k;return`<tr${fett?' class="sum"':''}><td>${l}</td><td class="r"><b>${eur0(e)}</b></td><td class="r">${eur0(k)}</td><td class="r ${g>=0?'c-g':'c-r'}"><b>${eur0(g)}</b></td><td class="r">${pctS(e?g/e*100:null)}</td><td class="r c-m">${ve?eur0(ve):'—'}</td><td class="r">${ve?`<span class="pill ${e>=ve?'p-g':'p-r'}">${e>=ve?'+':''}${n1((e-ve)/ve*100)} %</span>`:'<span class="pill p-n">neu</span>'}</td></tr>`;};
+  h+=`<section class="sec"><div class="sec-h"><h2>Je Betrieb und Bereich</h2><span class="sub">Jahr ${j} · Einnahmen gegen Plan ${j-1}</span></div><div class="tbl-wrap"><table><thead><tr><th>Bereich</th><th class="r">Einnahmen</th><th class="r">Kosten</th><th class="r">Gewinn</th><th class="r">Marge</th><th class="r">Einnahmen Plan ${j-1}</th><th class="r">Δ</th></tr></thead><tbody>`;
+  ['KIMOJO','PF im Park'].forEach(bt=>{const L=B.filter(x=>x.betrieb===bt);if(!L.length)return;
+    L.forEach(x=>{const v=V.find(y=>y.betrieb===bt&&y.bereich===x.bereich);h+=zeile(`<span class="site"><span class="dot" style="background:${x.bereich==='club'?'var(--teal)':'var(--primary)'}"></span>${esc(bt)} · ${PL_BEREICH[x.bereich]}</span>`,sumA(x.ein),sumA(x.kos),v?sumA(v.ein):0);});});
+  h+=zeile('Summe',tE,tK,vE,true)+'</tbody></table></div></section>';
+  // Monatsverlauf
+  h+=`<section class="sec"><div class="sec-h"><h2>Monatsverlauf ${j}</h2><span class="sub">Einnahmen nach Bereich, Kosten und Plan ${j-1}</span></div>`;
+  h+=planMonatsChart(MN.map((_,i)=>({th:B.filter(x=>x.bereich==='therapie').reduce((t,x)=>t+x.ein[i],0),cl:club.reduce((t,x)=>t+x.ein[i],0),kos:kos[i],vor:vEin[i]})),j);
+  h+=`<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Monat</th><th class="r">Einnahmen</th><th class="r">davon Club</th><th class="r">Kosten</th><th class="r">Gewinn</th><th class="r">Marge</th><th class="r">Einnahmen Plan ${j-1}</th><th class="r">Gewinn kumuliert</th></tr></thead><tbody>`;
+  let kum=0;MN.forEach((m,i)=>{kum+=gew[i];const c=club.reduce((t,x)=>t+x.ein[i],0);h+=`<tr><td>${m}</td><td class="r"><b>${eur0(ein[i])}</b></td><td class="r c-m">${c?eur0(c):'—'}</td><td class="r">${eur0(kos[i])}</td><td class="r ${gew[i]>=0?'c-g':'c-r'}"><b>${eur0(gew[i])}</b></td><td class="r">${pctS(ein[i]?gew[i]/ein[i]*100:null)}</td><td class="r c-m">${eur0(vEin[i])}</td><td class="r">${eur0(kum)}</td></tr>`;});
+  h+=`<tr class="sum"><td>Jahr</td><td class="r">${eur0(tE)}</td><td class="r">${eur0(tClub)}</td><td class="r">${eur0(tK)}</td><td class="r">${eur0(tG)}</td><td class="r">${pctS(tE?tG/tE*100:null)}</td><td class="r">${eur0(vE)}</td><td></td></tr></tbody></table></div>`;
+  h+=`<p class="hint">Quelle: Blatt „Dashboard ${j}“ bzw. „Dashboard“ der Finanzplanungen ${j} (KIMOJO und Physio und Fitness im Park), Blöcke Therapie und Club, Gewinn = Einnahmen − Kosten. Verglichen wird mit denselben Blöcken der Planung ${j-1} – nicht mit dem Ist, das steht unter „${j-1} · Ist + Plan“. Ändert sich die Planungsdatei, zeigt das Cockpit nach „Aktualisieren“ den neuen Stand.</p></section>`;
+  return h;
+}
+// Monatsbalken: Einnahmen gestapelt (Therapie, Club), Kosten als Linie, Vorjahresplan gestrichelt.
+function planMonatsChart(M,j){
+  const W=720,H=230,pd={t:16,r:16,b:26,l:56},cw=W-pd.l-pd.r,ch=H-pd.t-pd.b,F='-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif';
+  const maxV=Math.max(...M.map(x=>x.th+x.cl),...M.map(x=>x.kos),...M.map(x=>x.vor),1)*1.08;
+  const bw=cw/12,x=i=>pd.l+i*bw,y=v=>pd.t+ch-v/maxV*ch;
+  let s=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img" aria-label="Monatsverlauf Planung ${j}">`;
+  for(let k=0;k<=4;k++){const v=maxV/4*k,yp=y(v);s+=`<line x1="${pd.l}" y1="${yp}" x2="${W-pd.r}" y2="${yp}" stroke="#E5E5EA"/><text x="${pd.l-6}" y="${yp+3}" text-anchor="end" font-size="9" fill="#8A8A92" font-family="${F}">${fmK(v)}</text>`;}
+  M.forEach((d,i)=>{const bx=x(i)+bw*.18,bW=bw*.64;
+    s+=`<rect x="${bx}" y="${y(d.th)}" width="${bW}" height="${Math.max(0,y(0)-y(d.th))}" rx="3" fill="#BE3A30" opacity=".85"><title>${MN[i]}: Therapie ${eur0(d.th)}</title></rect>`;
+    if(d.cl)s+=`<rect x="${bx}" y="${y(d.th+d.cl)}" width="${bW}" height="${Math.max(0,y(d.th)-y(d.th+d.cl))}" rx="3" fill="#2E767C" opacity=".85"><title>${MN[i]}: Club ${eur0(d.cl)}</title></rect>`;
+    s+=`<text x="${x(i)+bw/2}" y="${H-pd.b+14}" text-anchor="middle" font-size="9" fill="#8A8A92" font-family="${F}" font-weight="600">${MN[i]}</text>`;});
+  const line=(k,attr)=>`<path d="${M.map((d,i)=>(i?' L ':'M ')+(x(i)+bw/2)+' '+y(d[k])).join('')}" fill="none" ${attr}/>`;
+  s+=line('vor','stroke="#3C5A80" stroke-width="2" stroke-dasharray="6,4" opacity=".7"');
+  s+=line('kos','stroke="#1C1C1E" stroke-width="2.2" stroke-linejoin="round"');
+  M.forEach((d,i)=>{s+=`<circle cx="${x(i)+bw/2}" cy="${y(d.kos)}" r="3" fill="#1C1C1E" stroke="#fff" stroke-width="1.5"><title>${MN[i]}: Kosten ${eur0(d.kos)}</title></circle>`;});
+  s+='</svg>';
+  const leg=(st,l)=>`<span><span style="display:inline-block;width:14px;height:10px;${st};border-radius:2px;vertical-align:middle;margin-right:5px"></span>${l}</span>`;
+  s+=`<div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center;margin-top:8px;font-size:11.5px;color:var(--muted);font-weight:600">${leg('background:#BE3A30;opacity:.85','Einnahmen Therapie')}${M.some(d=>d.cl)?leg('background:#2E767C;opacity:.85','Einnahmen Club'):''}${leg('height:3px;background:#1C1C1E','Kosten')}${leg('height:3px;background:#3C5A80;opacity:.7','Einnahmen Plan '+(j-1))}</div>`;
+  return s;
+}
+function pVorschauJahr(){
   if(!D.planK.dashboard&&!D.planP.dashboard)return'<section class="sec"><div class="empty">Keine Plandaten geladen.</div></section>';
   const data=vorschauDaten(),cur=istVorjahr()?12:new Date().getMonth();
   const sum=(k,src)=>data.reduce((s,d)=>s+d[src][k],0);
@@ -1123,7 +1201,7 @@ function pVorschau(){
   const trend=k=>istM.length?istM.reduce((s,d)=>s+d.fc[k],0)/istM.length*12:null;
   const delta=(ist,plan,inv)=>{if(!plan)return'';const d=(ist-plan)/Math.abs(plan)*100;const ok=inv?d<=0:d>=0;return`<span class="pill ${ok?'p-g':'p-r'}">${d>=0?'+':''}${n1(d)} % zum Plan</span>`;};
   const lastIst=data.reduce((l,d)=>d.useIst?d.i:l,-1);const istBis=lastIst>=0?'Jan – '+MN[lastIst]:'—';const fehlt=data.filter(d=>d.i<cur&&!d.useIst).map(d=>d.m);
-  let h=`<section class="sec"><div class="sec-h"><h2>Jahresvorschau ${cockpitJahr()}</h2><span class="sub">Ist ${istBis} (BWA) + Plan ${MN[cur]} – Dez · ${esc(sn(aS))}${fehlt.length?' · BWA fehlt für '+fehlt.join(', ')+' (Plan eingesetzt)':''}</span></div><div class="grid g3">`;
+  let h=`<section class="sec"><div class="sec-h"><h2>Planung ${cockpitJahr()} · Ist + Plan</h2><span class="sub">Ist ${istBis} (BWA) + Plan ${MN[cur]} – Dez · ${esc(sn(aS))}${fehlt.length?' · BWA fehlt für '+fehlt.join(', ')+' (Plan eingesetzt)':''}</span></div><div class="grid g3">`;
   h+=`<div class="kpi big"><div class="l">Einnahmen Jahresende</div><div class="v">${fmK(fc.ein)}</div><div class="s">${delta(fc.ein,pl.ein)} · Plan <b>${fmK(pl.ein)}</b></div><div class="s">Erbracht statt BWA: <b>${fmK(fc.erbracht)}</b>${trend('ein')?` · Trend <b>${fmK(trend('ein'))}</b>`:''}</div></div>`;
   h+=`<div class="kpi big"><div class="l">Kosten Jahresende</div><div class="v">${fmK(fc.kosten)}</div><div class="s">${delta(fc.kosten,pl.kosten,true)} · Plan <b>${fmK(pl.kosten)}</b></div></div>`;
   h+=`<div class="kpi big"><div class="l">Gewinn Jahresende</div><div class="v ${fc.gewinn>=0?'c-g':'c-r'}">${fmK(fc.gewinn)}</div><div class="s">${delta(fc.gewinn,pl.gewinn)} · Plan <b>${fmK(pl.gewinn)}</b></div><div class="s">Erbracht − Kosten: <b>${fmK(fc.erbracht-fc.kosten)}</b>${trend('gewinn')?` · Trend <b>${fmK(trend('gewinn'))}</b>`:''}</div></div>`;
