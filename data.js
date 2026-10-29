@@ -1046,7 +1046,9 @@ async function loadJSONPfad(f){
 function kennMonatStr(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
 // Sechs Monate. Mehr braucht die Zeitraumwahl nicht, und sechs kleine Dateien
 // parallel zu holen kostet weniger als eine Excel-Tabelle.
-const KENN_MONATE=6;
+// Ein Jahr und der laufende Monat — jeder Tag der letzten zwölf Monate soll
+// sich nachsehen lassen (29.10.2026). Je Monat eine kleine Datei.
+const KENN_MONATE=13;
 async function kennLade(){
   const aus={};
   for(const qu of PM_QUELLEN)aus[qu.q]=await kennLadeEine(qu.dir);
