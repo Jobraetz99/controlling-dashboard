@@ -1076,15 +1076,15 @@ async function kennLadeEine(dir){
 // ── Gespeicherte Tage nach den HEUTIGEN Regeln lesen ──────────────────────
 // Der Patientenchecker schreibt jeden Tag mit der Regel, die an diesem Tag
 // galt. Kommt eine Regel dazu (29.10.2026: EAP, FL-Meeting, Büro, Weekly Club,
-// Pause, Orga, Besprechung Leitung sind nicht verfügbar; Überstundenabbau ist
-// keine Arbeitszeit), stünden ältere Tage sonst noch unter „anderweitig
+// Pause, Orga, Besprechung Leitung sind nicht verfügbar; Überstundenabbau und
+// Krank sind keine Arbeitszeit), stünden ältere Tage sonst noch unter „anderweitig
 // genutzt". Umsortiert wird an den Einträgen, die je Tag mit Minuten
 // gespeichert sind (sonDetail, die 14 größten) — dieselben Muster wie im
 // Patientenchecker, in derselben Reihenfolge. Danach werden die Quoten so
 // gebildet wie dort: am Patienten / Arbeitszeit und am Patienten / verplanbar.
 // Je Therapeut gibt es keine Einzelposten; die Tabelle je Therapeut zeigt
 // ältere Tage deshalb weiter nach damaliger Regel.
-const KR_FREI=/(ü|ue|u)ber\s*stunden?\s*(frei|abbau|abbauen)|(ü|ue)[\s.-]*std\.?\s*(frei|abbau)|freizeitausgleich/i;
+const KR_FREI=/(ü|ue|u)ber\s*stunden?\s*(frei|abbau|abbauen)|(ü|ue)[\s.-]*std\.?\s*(frei|abbau)|freizeitausgleich|\bkrank(heit|meldung|gemeldet)?\b/i;
 const KR_FEST=/\beap\b|\bfl[\s.-]*meeting|b(?:ü|ue|u)ro[\s.-]*zeit|weekly\s*club\s*meeting|pausen?\b|office[\s.-]*zeit|orga[\s.-]*time|(^|[^a-zäöüß])orga([^a-zäöüß]|$)|blogger|theken[\s.-]*meeting|besprechung\s*leitung/i;
 const KR_ORGA=/\bplanung\b|vorbereit|\bmeeting\b|besprech/i;
 const KR_NAME=/inno(?:vation)?[\s.-]*time|\bfl[\s.-]*zeit|interne\s*fobi|einarbeitung|(^|[^a-zäöüß])blocker([^a-zäöüß]|$)/i;
