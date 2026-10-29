@@ -1189,7 +1189,9 @@ function pmSetZeit(z){
 // Kalendertage durchzuklicken führte durch Wochenenden, an denen nichts steht.
 function pmTageMitDaten(){
   return(pmQ().tage||[])
-    .filter(t=>t&&t.loc&&t.auf&&Object.keys(t.loc).length).map(t=>t.ds);
+    // Ein Tag mit Standortzahlen genügt — die nachgerechneten Kitzinger Vortage
+    // haben keinen Aufgabenstand; verlangte man ihn, ließe sich nicht blättern.
+    .filter(t=>t&&t.loc&&Object.keys(t.loc).length).map(t=>t.ds);
 }
 // Von wann bis wann reicht die Datei überhaupt? Begrenzt das Blättern, damit
 // man nicht endlos in leere Monate hinauswandert.
@@ -1227,7 +1229,7 @@ function pmSetDatum(welches,v){
 // sie nicht, und dann ist der Freitag der richtige Bezugstag.
 function pmLetzterTag(){
   const tage=pmQ().tage||[];
-  const voll=tage.filter(t=>t&&t.loc&&t.auf&&Object.keys(t.loc).length);
+  const voll=tage.filter(t=>t&&t.loc&&Object.keys(t.loc).length);
   if(voll.length)return voll[voll.length-1].ds;
   // Noch kein vollständiger Tag: dann der letzte Tag mit überhaupt Daten.
   // Telefoniezahlen allein sind besser als eine leere Seite — sie kommen aus
