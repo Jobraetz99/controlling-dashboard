@@ -3,7 +3,7 @@
 // Plan- und Monatshelfer) plus data_ext.js (MyWellness, Tagesauslastung). Nicht von Hand ändern.
 
 // ═══ CONFIG ═══
-const MSAL_CONFIG={auth:{clientId:"9fe9cda7-79c3-4d06-82dc-372715bb8086",authority:"https://login.microsoftonline.com/3e5c8d47-8ccc-42f6-877d-0d0e72972e39",redirectUri:window.location.origin+window.location.pathname.replace(/neu\/(index\.html)?$/,'')},cache:{cacheLocation:"sessionStorage"}};
+const MSAL_CONFIG={auth:{clientId:"9fe9cda7-79c3-4d06-82dc-372715bb8086",authority:"https://login.microsoftonline.com/3e5c8d47-8ccc-42f6-877d-0d0e72972e39",redirectUri:window.location.origin+window.location.pathname.replace(/(neu\/|alt\/)?(index\.html)?$/,'')},cache:{cacheLocation:"sessionStorage"}};
 const LR={scopes:["Files.Read","Sites.Read.All"]};
 const msal_app=new msal.PublicClientApplication(MSAL_CONFIG);
 const SITE=`kimojophysiotherapie.sharepoint.com`,SPATH=`/sites/KIMOJOManagement`;

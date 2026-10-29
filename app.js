@@ -15,7 +15,8 @@ const PAGES=[
   {id:'krankenstand',l:'Krankenstand'},
   {id:'bwa',l:'BWA'},
   {id:'cashflow',l:'Cashflow'},
-  {id:'liquiditaet',l:'Liquidität'}
+  {id:'liquiditaet',l:'Liquidität'},
+  {id:'praxis',l:'Praxismanagement'}
 ];
 aM='AKTUELL';// Standard: laufender Monat eingeschlossen
 let page=(location.hash||'#uebersicht').slice(1);
@@ -84,6 +85,9 @@ function rNav(){
 function rPage(){
   const el=document.getElementById('page');if(!el)return;
   const p=PAGES.find(x=>x.id===page)||PAGES[0];
+  // Praxismanagement hat eigene Filter (Betrieb, Zeitraum); die globale Leiste ausblenden.
+  const fl=document.getElementById('filters');if(fl)fl.style.display=p.id==='praxis'?'none':'';
+  if(p.id==='praxis'){el.innerHTML=pPraxis();try{rPraxis();}catch(e){console.warn('Praxis:',e);}try{pmAbgleich();}catch(e){}window.scrollTo({top:0});return;}
   el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='abgerechnet'?pAbgerechnet():p.id==='vorschau'?pVorschau():p.id==='planist'?pPlanIst():p.id==='auslastung'?pAuslastung():p.id==='termine'?pTermine():p.id==='therapeuten'?pTherapeuten():p.id==='krankenstand'?pKrankenstand():p.id==='bwa'?pBwa():p.id==='cashflow'?pCashflow():p.id==='liquiditaet'?pLiquiditaet():pAlt(p);
   window.scrollTo({top:0});
 }
@@ -425,6 +429,15 @@ function pAbgerechnet(){
   tl.forEach(t=>{h+=`<tr><td><b>${esc(t.name)}</b></td><td>${siteTag(t.standort)}</td><td class="r">${n0(t.beh)}</td><td class="r"><b>${eur0(t.brutto)}</b></td><td class="r">${eur0(t.zuz)}${t.zuzEst?'*':''}</td><td class="r">${eur0(t.netto)}</td><td class="r">${oe(t.beh?t.brutto/t.beh:0)}</td><td class="r">${t.quelle==='medifox'?eur0(t.offen):'<span class="c-m">—</span>'}</td><td><div class="bar"><i style="width:${t.brutto/mx*100}%;background:${SITE_COL[t.standort]||'var(--blue)'}"></i></div></td></tr>`;});
   h+='</tbody></table></div><p class="hint">Je Person nur aus der thevea-Statistik (Privatanteil dort nicht je Person ausweisbar). Die Medifox-Rechnungsübersicht trägt keine Therapeut:in, deshalb fehlen PF im Park und KIMOJO vor dem Cutover hier.</p></section>';
   return h;
+}
+
+// ── Praxismanagement ─────────────────────────────────────────────────────
+// Patientenchecker-Kennzahlen (Auslastung, Lücken, Telefonie, Aufgaben …).
+// Rechnung und Darstellung kommen unverändert aus dem gemeinsamen Datenteil
+// (rPraxis schreibt in #praxisBody); das Aussehen steht in styles.css unter
+// „Praxismanagement“ und gilt nur innerhalb von #praxisBody.
+function pPraxis(){
+  return`<section class="sec"><div class="sec-h"><h2>Praxismanagement</h2><span class="sub">Hat das Praxismanagement dafür gesorgt, dass die Praxis organisatorisch sauber und wirtschaftlich gut gelaufen ist? Sechs Kennzahlen, darunter der Drill-down.</span></div><div id="praxisBody"></div></section>`;
 }
 
 // ── Krankenstand ─────────────────────────────────────────────────────────

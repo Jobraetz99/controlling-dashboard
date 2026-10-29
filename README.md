@@ -1,7 +1,9 @@
 # Management Controlling
 
-Einzeldatei-Dashboard der BM Group, angemeldet über Microsoft Entra ID.
-Die Daten kommen erst nach der Anmeldung aus SharePoint.
+Cockpit der BM Group, angemeldet über Microsoft Entra ID. Die Daten kommen erst nach der Anmeldung aus SharePoint.
 
-Arbeitskopie: `12_Code/Controlling Dashbaord/dashboard.html` in OneDrive. Hier wird nichts bearbeitet,
-nur die aktuelle Fassung eingespielt.
+- `/` aktuelles Cockpit (index.html, app.js, data.js, styles.css)
+- `/alt/` vorherige Einzeldatei als Rückfall
+- `/neu/` Weiterleitung auf `/`
+
+Arbeitskopie: `12_Code/Controlling Dashbaord/neu/` (aktuell) und `dashboard.html` (alt) in OneDrive. Hier wird nichts bearbeitet, nur eingespielt.
