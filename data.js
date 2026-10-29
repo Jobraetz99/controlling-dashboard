@@ -1695,7 +1695,7 @@ function rPraxis(){
       +' <span style="color:var(--muted);font-weight:400">· 100 %</span></span></div>';
     h+=zeile('<b>nicht verfügbar</b>',z.blk+z.rsv,vonKap(z.blk+z.rsv),'#D8D8DE');
     h+='<div style="margin-left:24px">'
-      +zeile('geblockt — FL-Zeit, Inno-Time, Fortbildung',z.blk,null,'')
+      +zeile('geblockt — FL-Zeit, FL-Meeting, EAP, Büro, Weekly Club, Inno-Time, Fortbildung, verschobene Pause',z.blk,null,'')
       +zeile('reserviert — Platz für Dauerpatient, Rezept fehlt',z.rsv,null,'')
       +'</div>';
     h+=zeile('<b>verfügbar</b>',verf,vonKap(verf),'');
@@ -1779,7 +1779,7 @@ function rPraxis(){
     h+='</tbody></table>'
       +'<div style="font-size:11.5px;color:var(--muted);margin-top:10px;line-height:1.7">'
       +'<b>verplanbar</b> ist die Arbeitszeit ohne alles, was nicht zu vergeben war: '
-      +'<b>geblockt</b> (FL-Zeit, Inno-Time, interne Fortbildung, Einarbeitung, ganztägige Blocker) '
+      +'<b>geblockt</b> (FL-Zeit, FL-Meeting, EAP-Zeit, Büro-Zeit, Weekly Club Meeting, Inno-Time, interne Fortbildung, Einarbeitung, eine in die Arbeitszeit verschobene Pause, ganztägige Blocker) '
       +'und <b>reserviert</b> (kurze Blocker — für einen Dauerpatienten freigehaltene Plätze). '
       +'<b>sonstiges</b> bleibt dagegen drin: Besprechungen, Planung und Einweisungen sind das, was '
       +'jemand in einer Lücke erledigt hat, weil kein Patient da war — die Zeit war zu vergeben, sie '
