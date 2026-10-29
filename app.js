@@ -753,12 +753,15 @@ const LIQ_RE_NR=/\b(re|rechnung|rg|rnr|rech)\b|[A-Z]{1,3}-?20\d\d-\d+|\b20\d\d-\
 // Bankeingänge, die die Abrechnungssicht ersetzt (Kassen, BG, Patientenrechnungen)
 function liqIstLeistung(x){if(x.b<=0)return false;const k=bankKat(x);return k==='kassen'||k==='bg'||(k==='sonst'&&LIQ_RE_NR.test(x.z));}
 function liqBetriebVonSite(s){return s==='PF im Park'?'PHFIP':'KIMOJO';}
-// thevea-Kassenabrechnung (über opta data): abgerechnet netto minus Eingänge von opta data
+// thevea-Kassenabrechnung (über opta data): abgerechnet netto minus Privat- und
+// Beihilferezepte (die laufen als Privatrechnung an den Patienten und stehen dort
+// schon als Forderung) minus Eingänge von opta data
 function liqTheveaKassenOffen(stand){
   const rows=(D.abg&&D.abg.rows)||[],abgN=rows.reduce((t,r)=>t+(r.netto||0),0),erst=rows.map(r=>r.ym).sort()[0];
-  if(!erst)return{offen:0,abg:0,ein:0};const ab=new Date(erst+'-01T00:00:00Z');
+  if(!erst)return{offen:0,abg:0,ein:0,privat:0};const ab=new Date(erst+'-01T00:00:00Z');
+  const privat=((D.re&&D.re.rows)||[]).filter(r=>!r.storno&&/^Privat/i.test(r.artName)&&r.ym>=erst).reduce((t,r)=>t+r.brutto,0);
   const ein=(D.konten||[]).filter(k=>k.betrieb==='KIMOJO').flatMap(k=>k.tx).filter(x=>x.b>0&&/opta data/i.test(x.n)&&x.d>=ab&&(!stand||x.d<=stand)).reduce((t,x)=>t+x.b,0);
-  return{offen:Math.max(0,abgN-ein),abg:abgN,ein};
+  return{offen:Math.max(0,abgN-privat-ein),abg:abgN,ein,privat};
 }
 // Rezepte aus dem Kalender. thevea: Rezeptnummer am Termin, offen ist ein Rezept, solange
 // es in der Verordnungswert-Prognose steht (Wert erbracht/offen und Einheiten von dort).
@@ -1038,7 +1041,7 @@ function liqReserve(){
   const R=D.rechnungen||{byPT:{}};const pts=Object.values(R.byPT||{}).filter(x=>ents.some(e=>e.pre===x.prefix));
   const medifoxFord=pts.reduce((t,x)=>t+x.saldo,0),medifoxN=pts.reduce((t,x)=>t+x.count,0);
   const reOffen={};((D.re&&D.re.rows)||[]).forEach(r=>{if(r.storno||!matchS(r.standort))return;const off=r.brutto-r.bezahlt;if(off<=0.005)return;const a=reOffen[r.artName]||(reOffen[r.artName]={n:0,offen:0});a.n++;a.offen+=off;});
-  const tvK=ents.some(e=>e.pre==='KIMOJO')?liqTheveaKassenOffen():{offen:0};if(tvK.offen>0)reOffen['Kassen über opta data (abgerechnet minus Eingang)']={n:0,offen:tvK.offen};
+  const tvK=ents.some(e=>e.pre==='KIMOJO')?liqTheveaKassenOffen():{offen:0};if(tvK.offen>0)reOffen['Kassen über opta data (abgerechnet ohne Privatrezepte minus Eingang)']={n:0,offen:tvK.offen};
   const theveaFord=Object.values(reOffen).reduce((t,x)=>t+x.offen,0),theveaN=Object.values(reOffen).reduce((t,x)=>t+x.n,0);
   const ford=medifoxFord+theveaFord;
   // Stufe 3: Unabgerechnet
@@ -1050,7 +1053,7 @@ function liqReserve(){
   const mxF=Math.max(...pts.map(x=>x.saldo),...Object.values(reOffen).map(x=>x.offen),1);
   pts.sort((a,b)=>b.saldo-a.saldo).forEach(x=>{const e=BANK_ENT.find(e=>e.pre===x.prefix);h+=`<tr><td class="c-m">Medifox</td><td><span class="site"><span class="dot" style="background:${e.col}"></span>${esc(e.l)}</span></td><td>${esc(x.typ)}</td><td class="r">${n0(x.count)}</td><td class="r"><b>${eur0(x.saldo)}</b></td><td><div class="bar"><i style="width:${x.saldo/mxF*100}%;background:var(--blue)"></i></div></td></tr>`;});
   Object.entries(reOffen).sort((a,b)=>b[1].offen-a[1].offen).forEach(([art,x])=>{h+=`<tr><td class="c-m">thevea</td><td><span class="site"><span class="dot" style="background:var(--primary)"></span>KIMOJO GmbH</span></td><td>${esc(art)}</td><td class="r">${n0(x.n)}</td><td class="r"><b>${eur0(x.offen)}</b></td><td><div class="bar"><i style="width:${x.offen/mxF*100}%;background:var(--blue)"></i></div></td></tr>`;});
-  h+=`<tr class="sum"><td colspan="3">Summe</td><td class="r">${n0(medifoxN+theveaN)}</td><td class="r">${eur0(ford)}</td><td></td></tr></tbody></table></div><p class="hint">Medifox: Rechnungen mit offenem Saldo aus der Rechnungsübersicht (Nummern mit „K-“ gehören zu Kitzingen, ohne Präfix zu KIMOJO vor dem Cutover). thevea: nicht stornierte Rechnungen mit Restbetrag (Betrag minus Zahlungseingang). thevea-Kassen: in thevea abgerechnete Verordnungen (ohne Zuzahlung) minus Eingänge von opta data auf dem KIMOJO-Konto. Überfällige Rechnungen sind häufig schon bezahlt und nur nicht ausgebucht, in der Vorschau zählen nur noch nicht fällige.</p></section>`;
+  h+=`<tr class="sum"><td colspan="3">Summe</td><td class="r">${n0(medifoxN+theveaN)}</td><td class="r">${eur0(ford)}</td><td></td></tr></tbody></table></div><p class="hint">Medifox: Rechnungen mit offenem Saldo aus der Rechnungsübersicht (Nummern mit „K-“ gehören zu Kitzingen, ohne Präfix zu KIMOJO vor dem Cutover). thevea: nicht stornierte Rechnungen mit Restbetrag (Betrag minus Zahlungseingang). thevea-Kassen: in thevea abgerechnete Verordnungen (ohne Zuzahlung, ohne Privat- und Beihilferezepte, die als Privatrechnung oben stehen) minus Eingänge von opta data auf dem KIMOJO-Konto. Überfällige Rechnungen sind häufig schon bezahlt und nur nicht ausgebucht, in der Vorschau zählen nur noch nicht fällige.</p></section>`;
   const htmlFord=h;h='';
   // III Unabgerechnet
   const offE=Object.entries(off).sort((a,b)=>b[1].offen-a[1].offen);const mxO=Math.max(...offE.map(x=>x[1].offen),1);
