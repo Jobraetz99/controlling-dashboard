@@ -903,9 +903,18 @@ const KENN_DIR='/12_Code/Patientenchecker/Dateien Export/kennzahlen/';
 // Einen weiteren Betrieb nachzuziehen heißt: Quelle eintragen und `q` beim
 // Betrieb setzen. Ein Betrieb ohne angeschlossene Quelle steht als
 // „Coming soon" da, statt still zu fehlen.
+// telOrt: der Webex-Standort dieser Quelle. Die Anlage telefoniert fuer
+// Kitzingen und Werneck; die Gesamtzahl in "tel" mischt beide. Eine Quelle
+// mit telOrt liest nur "telOrt[<Standort>]" — fehlt das, bleibt die Telefonie
+// leer, statt die Zahl beider Standorte als ihre auszugeben.
 const PM_QUELLEN=[
-  {q:'werneck', dir:KENN_DIR}
+  {q:'werneck', dir:KENN_DIR, telOrt:'Werneck'}
 ];
+function pmTelFuer(qk,t){
+  const qu=PM_QUELLEN.find(x=>x.q===qk);
+  if(!qu||!qu.telOrt)return t.tel||null;
+  return (t.telOrt&&t.telOrt[qu.telOrt])||null;
+}
 const PM_BETRIEBE=[
   {k:'alle',     l:'Alle',           q:null,      locs:null},
   {k:'kphysio',  l:'KIMOJO Physio',  q:'werneck', locs:['wp']},
@@ -949,7 +958,7 @@ function pmQ(){
       const z=proTag[t.ds]||(proTag[t.ds]={ds:t.ds,ts:0});
       z.ts=Math.max(z.ts||0,t.ts||0);
       if(erste){
-        if(t.tel&&!z.tel)z.tel=t.tel;
+        const tel=pmTelFuer(b.q,t);if(tel&&!z.tel)z.tel=tel;
         if(t.rez&&!z.rez)z.rez=t.rez;
         if(t.auf&&!z.auf)z.auf=t.auf;
       }
@@ -1550,7 +1559,8 @@ function rPraxis(){
     +(einTag?'':' · ø '+Math.round(Z.luecken/Math.max(1,Z.locTage))+' je Tag')+'</div></div>';
   h+='<div class="hk"><div class="hk-l">Telefonannahmequote</div>'
     +'<div class="hk-v">'+(Z.quote==null?'–':Z.quote+'%')+'</div>'
-    +'<div class="hk-sub">'+Z.tel.wsAn+' von '+Z.tel.ws+' in der Warteschlange · Ziel '+PM_ZIEL_QUOTE+' %'+zus+'</div></div>';
+    +'<div class="hk-sub">'+(Z.telTage?Z.tel.wsAn+' von '+Z.tel.ws+' in der Warteschlange · Ziel '+PM_ZIEL_QUOTE+' %'+zus
+      :'Für Werneck allein liegt keine Telefonie vor. Sie entsteht, sobald der Patientenchecker einmal geöffnet wurde.')+'</div></div>';
   h+='<div class="hk"><div class="hk-l">Termine vereinbart</div>'
     +'<div class="hk-v">'+(tr&&tr.vereinbart!=null?tr.vereinbart:pmLeer)+'</div>'
     +'<div class="hk-sub">'+(tr?(tr.neu!=null?'davon '+tr.neu+' neu · ':'')+'an '+tr.tage+' Tag'+(tr.tage===1?'':'en')+' eingetragen'
