@@ -2977,7 +2977,7 @@ async function bankKontenAufbauen(){
   const K={};
   const konto=(iban,betrieb)=>K[iban]||(K[iban]={iban,betrieb,name:'',bank:'',tx:[],saldo:null,saldoDatum:null,kreditlinie:null,verfuegbar:null,gueltigBis:null,fehler:'',abruf:null,quelle:''});
   // 1. Bankabruf
-  meta.forEach(m=>{const k=konto(m.iban,bankBetrieb(m.iban,m.inhaber,m.betrieb));Object.assign(k,{name:m.name||m.produkt||'',bank:m.bank||'',inhaber:m.inhaber||'',saldo:m.saldo==null?null:m.saldo,saldoDatum:bankDatum(m.saldo_datum),kreditlinie:m.kreditlinie==null?null:m.kreditlinie,verfuegbar:m.verfuegbar==null?null:m.verfuegbar,gueltigBis:m.gueltig_bis?new Date(m.gueltig_bis):null,fehler:m.fehler||'',abruf:m.abruf?new Date(m.abruf):null,quelle:'Bankabruf'});});
+  meta.forEach(m=>{const k=konto(m.iban,bankBetrieb(m.iban,m.inhaber,m.betrieb));Object.assign(k,{name:m.name||m.produkt||'',bank:m.bank||'',inhaber:m.inhaber||'',saldo:m.saldo==null?null:m.saldo,saldoDatum:bankDatum(m.saldo_datum),kreditlinie:m.kreditlinie==null?null:m.kreditlinie,verfuegbar:m.verfuegbar==null?null:m.verfuegbar,gueltigBis:m.gueltig_bis?new Date(m.gueltig_bis):null,fehler:m.fehler||'',hinweis:m.hinweis||'',abruf:m.abruf?new Date(m.abruf):null,quelle:'Bankabruf'});});
   Object.entries(ord.tx).forEach(([iban,l])=>{const k=konto(iban,bankBetrieb(iban));k.tx=l;if(!k.quelle)k.quelle='Bankabruf';});
   // 2. Excel-Exporte: nur Buchungen vor dem ersten abgerufenen Tag des Kontos
   for(const [b,key] of Object.entries(BETRIEB_KEY)){

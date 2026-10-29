@@ -760,7 +760,7 @@ function liqPrognose(betriebe){
   const kuenftigeWerktage=[];for(let d=liqPlus(stand,1);d<=ende;d=liqPlus(d,1))if(liqWerktag(d))kuenftigeWerktage.push(d);
   const ausMonat=-H91.filter(x=>x.b<0).reduce((t,x)=>t+x.b,0)/3,grenze=Math.max(5000,Math.round(ausMonat*0.1/1000)*1000);
   const rest={};
-  const G={};H.forEach(x=>{const k=liqKey(x);(G[k]=G[k]||[]).push(x);});
+  const G={};H.forEach(x=>{const k=x._b+liqKey(x);(G[k]=G[k]||[]).push(x);});
   Object.values(G).forEach(l=>{
     l.sort((a,b)=>a.d-b.d);const last=l[l.length-1],kat=bankKat(last);
     const name=last.n||(/sammel/i.test(last.t)?'Sammelüberweisung (Gehälter)':last.t)||'ohne Namen';
@@ -770,19 +770,26 @@ function liqPrognose(betriebe){
     const person=kat==='intern'&&last.b<0&&/br[äa]tz/i.test(name);
     const nieFort=x=>{einmal.push(Object.assign({kat:bankKat(x),grund:kat==='intern'?'Umbuchung, Gesellschafter':'Erstattung'},x));};
     if((kat==='intern'&&!person)||(kat==='finanzamt'&&last.b>0)){l.filter(x=>x.d>von91).forEach(nieFort);return;}
+    // große Einzelbeträge zählen nie als laufend oder Durchschnitt
+    const gross=x=>x.b<=-grenze&&kat!=='gehalt'&&kat!=='sv';
+    const invest=kat==='invest';
     // laufend: mehrere Buchungen je Monat
-    if(cnt>=4&&cnt/dm>1.34&&!person){
+    if(cnt>=4&&cnt/dm>1.34&&!person&&!invest){
       if((stand-last.d)/LIQ_TAG>35)return;
-      const s=l.filter(x=>x.d>von91).reduce((t,x)=>t+x.b,0)/werktageVor;
+      l.filter(x=>x.d>von91&&gross(x)).forEach(x=>einmal.push(Object.assign({kat,grund:'Einzelbetrag ab '+eur0(grenze)},x)));
+      const s=l.filter(x=>x.d>von91&&!gross(x)).reduce((t,x)=>t+x.b,0)/werktageVor;
       kuenftigeWerktage.forEach(d=>buche(d,s,kat,'laufend'));return;
     }
     // wiederkehrend in festem Rhythmus
     if(dm>=2){
       const gaps=[];for(let i=1;i<dm;i++)gaps.push(mon[i]-mon[i-1]);
       const g=Math.round(liqMedian(gaps));
-      if(((g===1&&dm>=3)||((g===2||g===3)&&dm>=2))&&gaps.filter(x=>x===g).length>=Math.ceil(gaps.length*0.6)){
+      // neu begonnene Monatszahlung: zwei Monate in Folge, gleicher Betrag (±10 %)
+      const l2=l.filter(x=>!gross(x)),neuMonat=dm===2&&g===1&&l2.length===2&&Math.abs(l2[1].b-l2[0].b)<=Math.abs(l2[0].b)*0.1;
+      if(((g===1&&(dm>=3||neuMonat))||((g===2||g===3)&&dm>=2))&&gaps.filter(x=>x===g).length>=Math.ceil(gaps.length*0.6)){
         if(liqMI(stand)-liqMI(last.d)>g+1)return;// beendet
-        const l3=l.slice(-3),betr=liqMedian(l3.map(x=>x.b)),tag=Math.round(liqMedian(l3.map(x=>x.d.getUTCDate())));
+        const lr=l.filter(x=>!gross(x)),l3=(lr.length?lr:l).slice(-3),betr=liqMedian(l3.map(x=>x.b)),tag=Math.round(liqMedian(l3.map(x=>x.d.getUTCDate())));
+        l.filter(x=>x.d>von91&&gross(x)&&lr.length).forEach(x=>einmal.push(Object.assign({kat,grund:'Einzelbetrag ab '+eur0(grenze)},x)));
         for(let mi=liqMI(last.d)+g;;mi+=g){
           const y=Math.floor(mi/12),mo=mi%12,ml=new Date(Date.UTC(y,mo+1,0)).getUTCDate();let d=new Date(Date.UTC(y,mo,Math.min(tag,ml)));
           if(d>ende)break;
@@ -794,7 +801,7 @@ function liqPrognose(betriebe){
       }
     }
     // übrige: Durchschnitt je Kategorie, Einmaleffekte ausgenommen
-    l.filter(x=>x.d>von91).forEach(x=>{if(person){nieFort(x);return;}if(Math.abs(x.b)>=grenze){einmal.push(Object.assign({kat,grund:'Einzelbetrag ab '+eur0(grenze)},x));return;}const k=(x.b>0?'ein':'aus')+'|'+kat;rest[k]=(rest[k]||0)+x.b;});
+    l.filter(x=>x.d>von91).forEach(x=>{if(person){nieFort(x);return;}if(invest){einmal.push(Object.assign({kat,grund:'Investition'},x));return;}if(gross(x)){einmal.push(Object.assign({kat,grund:'Einzelbetrag ab '+eur0(grenze)},x));return;}const k=(x.b>0?'ein':'aus')+'|'+kat;rest[k]=(rest[k]||0)+x.b;});
   });
   Object.entries(rest).forEach(([k,s])=>{const kat=k.split('|')[1],t=s/werktageVor;kuenftigeWerktage.forEach(d=>buche(d,t,kat,'Durchschnitt'));});
   let lauf=start;wochen.forEach(w=>{w.anfang=lauf;lauf+=w.ein+w.aus;w.ende=lauf;});
@@ -814,7 +821,7 @@ function liqVorschau(){
   const notes=[];
   if(P.alter>3)notes.push(['r',`Kontostand vom ${fDatU(P.stand)} (vor ${n0(P.alter)} Tagen). ${D.bankAbruf?'Der Bankabruf hat seitdem nichts geliefert, bitte das Protokoll prüfen.':'Der automatische Bankabruf ist noch nicht eingerichtet, die Vorschau beginnt deshalb beim letzten Export.'}`]);
   else P.konten.forEach(k=>{const t=Math.round((P.stand-liqTag(k.saldoDatum))/LIQ_TAG);if(t>3)notes.push(['a',`${esc(k.name||'Konto')} …${esc(k.iban.slice(-6))}: Kontostand vom ${fDatU(k.saldoDatum)} (${esc(k.quelle)}), älter als die übrigen Konten.`]);});
-  P.konten.forEach(k=>{if(k.fehler)notes.push(['r',`${esc(k.name||'Konto')} …${esc(k.iban.slice(-6))}: ${esc(k.fehler)}.`]);else if(k.gueltigBis){const t=Math.round((k.gueltigBis-new Date())/LIQ_TAG);if(t<=14)notes.push(['a',`Die Bankfreigabe für ${esc(k.name||'Konto')} …${esc(k.iban.slice(-6))} endet ${t<0?'ist abgelaufen':'in '+n0(t)+' Tagen'} (${fDatU(k.gueltigBis)}). Im Terminal erneuern: python3 bank_abruf.py verbinden`]);}});
+  P.konten.forEach(k=>{if(k.hinweis&&!k.fehler)notes.push(['a',`${esc(k.name||'Konto')} …${esc(k.iban.slice(-6))}: ${esc(k.hinweis)} (${k.abruf?k.abruf.toLocaleString('de-DE',{dateStyle:'short',timeStyle:'short'}):'—'}).`]);if(k.fehler)notes.push(['r',`${esc(k.name||'Konto')} …${esc(k.iban.slice(-6))}: ${esc(k.fehler)}.`]);else if(k.gueltigBis){const t=Math.round((k.gueltigBis-new Date())/LIQ_TAG);if(t<=14)notes.push(['a',`Die Bankfreigabe für ${esc(k.name||'Konto')} …${esc(k.iban.slice(-6))} endet ${t<0?'ist abgelaufen':'in '+n0(t)+' Tagen'} (${fDatU(k.gueltigBis)}). Im Terminal erneuern: python3 bank_abruf.py verbinden`]);}});
   const sub=`${esc(liqName(bs))} · Start ${fDatU(P.stand)} · ${LIQ_WOCHEN} Wochen bis ${fDatU(w[LIQ_WOCHEN-1].bis)}`;
   h+=`<section class="sec"><div class="sec-h"><h2>Liquiditätsvorschau</h2><span class="sub">${sub}</span></div>`;
   notes.forEach(([c,t])=>{h+=`<div class="note${c==='r'?' r':''}">${t}</div>`;});
@@ -842,7 +849,7 @@ function liqVorschau(){
   // Zusammensetzung
   const zeile=sd=>P.met.filter(m=>m.sd===sd).sort((a,b)=>Math.abs(b.summe)-Math.abs(a.summe)).map(m=>`<tr><td>${esc(katName(sd,m.kat))}</td><td class="r ${sd==='ein'?'c-g':'c-r'}"><b>${eur0(m.summe)}</b></td><td class="r">${eur0(m.summe/LIQ_WOCHEN)}</td><td class="c-m">${Object.entries(m.art).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).map(([a])=>LIQ_ART[a]).join(', ')}</td></tr>`).join('');
   h+=`<section class="sec"><div class="sec-h"><h2>Woraus die Vorschau besteht</h2><span class="sub">${LIQ_WOCHEN} Wochen je Kategorie</span></div><div class="tbl-wrap"><table><thead><tr><th>Kategorie</th><th class="r">${LIQ_WOCHEN} Wochen</th><th class="r">ø Woche</th><th>Herleitung</th></tr></thead><tbody><tr class="sum"><td colspan="4">Einzahlungen</td></tr>${zeile('ein')}<tr class="sum"><td colspan="4">Auszahlungen</td></tr>${zeile('aus')}</tbody></table></div>`;
-  h+=`<p class="hint">Grundlage sind die Bankbuchungen der letzten sechs Monate bis ${fDatU(P.stand)}. Feste Termine: gleicher Zahlungsbeteiligter mindestens dreimal monatlich oder zweimal im Zwei- bis Dreimonatsrhythmus, Betrag als Median der letzten drei Zahlungen. Laufend: Zahler mit mehreren Buchungen je Monat, verteilt auf die Werktage. Alles Übrige als Durchschnitt der letzten 13 Wochen. Nicht fortgeschrieben werden Einzelbeträge ab ${eur0(P.grenze)}, Umbuchungen zwischen eigenen Konten und Betrieben, Einlagen und Steuererstattungen. Zahlungen an Gesellschafter zählen nur, wenn sie in festem Rhythmus kommen.</p></section>`;
+  h+=`<p class="hint">Grundlage sind die Bankbuchungen der letzten sechs Monate bis ${fDatU(P.stand)}. Feste Termine: gleicher Zahlungsbeteiligter mindestens dreimal monatlich (neue Verträge: zweimal in Folge mit gleichem Betrag) oder zweimal im Zwei- bis Dreimonatsrhythmus, Betrag als Median der letzten drei Zahlungen. Laufend: Zahler mit mehreren Buchungen je Monat, verteilt auf die Werktage. Alles Übrige als Durchschnitt der letzten 13 Wochen. Nicht fortgeschrieben werden einzelne Auszahlungen ab ${eur0(P.grenze)} (außer Gehältern und Sozialversicherung), Investitionen ohne festen Rhythmus, Umbuchungen zwischen eigenen Konten und Betrieben, Einlagen und Steuererstattungen. Zahlungen an Gesellschafter zählen nur, wenn sie in festem Rhythmus kommen.</p></section>`;
   // Feste Termine
   const TMIN=500,tGross=P.termine.filter(t=>Math.abs(t.b)>=TMIN),tKlein=P.termine.length-tGross.length;
   if(tGross.length){
