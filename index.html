@@ -401,11 +401,12 @@ Mit Microsoft anmelden</button>
 
 <!-- ══ FINANZEN ══ -->
 <div class="area a" id="area-finanzen">
-<div class="summary"><h2>Finanzen</h2><p>Umsatz, Ergebnis und Liquidität der BM Group — Plan gegen Ist, rollierende Jahresvorschau und Deckung über alle Cashflow-Ebenen.</p></div>
+<div class="summary" style="position:relative"><a href="neu/" style="float:right;font-size:13px;font-weight:600;color:var(--blue);text-decoration:none;margin-top:6px">Zur neuen Ansicht ↗</a><h2>Finanzen</h2><p>Umsatz, Ergebnis und Liquidität der BM Group — Plan gegen Ist, rollierende Jahresvorschau und Deckung über alle Cashflow-Ebenen.</p></div>
 <div class="flt" id="flt"></div>
 <div class="sub-tabs" id="secNav">
 <button class="stab a" onclick="navTo('sec-kpi',this)">📊 Übersicht</button>
 <button class="stab" onclick="navTo('sec-erbracht',this)">💶 Erbracht</button>
+<button class="stab" onclick="location.href='neu/#abgerechnet'" title="Öffnet die neue Ansicht">🧾 Abgerechnet ↗</button>
 <button class="stab" onclick="navTo('sec-forecast',this)">🔮 Jahresvorschau</button>
 <button class="stab" onclick="navTo('sec-planist',this)">📈 Plan vs. Ist</button>
 <button class="stab" onclick="navTo('sec-ausl',this)">⚡ Auslastung</button>
@@ -811,9 +812,18 @@ function tvFeiertage(j){
 const TV_WD=['SONNTAG','MONTAG','DIENSTAG','MITTWOCH','DONNERSTAG','FREITAG','SAMSTAG'];
 function tvR1(x){return Math.round(x*10)/10;}
 // Stunden eines Monats: aus thevea/Medifox (t.std), sonst Tracker-Wochenstunden × 4,33.
+// Ein- und Austritt (t.ab/t.bis, aus dem ersten/letzten Termin in tvStammdaten):
+// Monate ganz davor bzw. danach haben kein Soll, der Ein-/Austrittsmonat zählt
+// bei Tracker-Stunden anteilig nach Arbeitstagen.
+function tvArbeitstage(j,mi,von,bis){const f=tvFeiertage(j),n=new Date(j,mi,0).getDate();let c=0;for(let d=1;d<=n;d++){const dt=new Date(j,mi-1,d),y=tvYmd(dt);if(dt.getDay()===0||dt.getDay()===6||f.has(y))continue;if(von&&y<von)continue;if(bis&&y>bis)continue;c++;}return c;}
 function tvStdMonat(t,m){
+  const j=new Date().getFullYear(),mi=MN.indexOf(m)+1,ym=j+'-'+String(mi).padStart(2,'0');
+  if(t.ab&&t.ab.slice(0,7)>ym)return{soll:0,anw:0,q:'vorEintritt'};
+  if(t.bis&&t.bis.slice(0,7)<ym)return{soll:0,anw:0,q:'nachAustritt'};
   if(t.std&&t.std[m])return t.std[m];
-  const wh=(t.mh&&t.mh[m])||t.wh||0;return{soll:tvR1(wh*4.33),anw:tvR1(wh*4.33),q:'tracker'};
+  const wh=(t.mh&&t.mh[m])||t.wh||0;let f=1;
+  if(t.ab&&t.ab.slice(0,7)===ym||t.bis&&t.bis.slice(0,7)===ym){const alle=tvArbeitstage(j,mi);f=alle?tvArbeitstage(j,mi,t.ab&&t.ab.slice(0,7)===ym?t.ab:null,t.bis&&t.bis.slice(0,7)===ym?t.bis:null)/alle:1;}
+  return{soll:tvR1(wh*4.33*f),anw:tvR1(wh*4.33*f),q:'tracker'};
 }
 function tvStdSumme(t,months){
   let soll=0,anw=0,tracker=false;
@@ -822,6 +832,17 @@ function tvStdSumme(t,months){
 }
 function tvSpanMin(a,b){const x=String(a||'').split(':'),y=String(b||'').split(':');return(+y[0]*60+(+y[1]||0))-(+x[0]*60+(+x[1]||0));}
 function tvWochenStd(rec){return(rec&&rec.zeitspannen||[]).reduce((s,z)=>s+Math.max(0,tvSpanMin(z.from,z.until)),0)/60;}
+// Händische Korrekturen der thevea-Arbeitszeiten. thevea führt Personen mit
+// wechselndem freien Tag mit beiden Tagen als Arbeitstag. Die Regel nimmt je
+// Kalenderwoche einen der Tage heraus: gerade KW der erste, ungerade KW der
+// zweite Tag. Schlüssel = Name wie im Export, klein geschrieben.
+const TV_FREI_WECHSEL={'lommel, paulina':['MONTAG','FREITAG']};
+function tvFreiWechsel(name){return TV_FREI_WECHSEL[tvNorm(name)]||null;}
+function tvWochenStdK(rec,name){
+  const w=tvWochenStd(rec),k=tvFreiWechsel(name);if(!k)return w;
+  const tag=wd=>(rec&&rec.zeitspannen||[]).filter(z=>z.wochentag===wd).reduce((s,z)=>s+Math.max(0,tvSpanMin(z.from,z.until)),0)/60;
+  return w-(tag(k[0])+tag(k[1]))/2;
+}
 function tvGiltIm(rec,jahr,mi){
   const a=new Date(jahr,mi-1,1),e=new Date(jahr,mi,0,23,59,59);
   const vf=rec.validFrom?new Date(rec.validFrom+'T00:00:00'):null,vu=rec.validUntil?new Date(rec.validUntil+'T23:59:59'):null;
@@ -848,6 +869,11 @@ function tvStammdaten(jahr,az,f4,abwes){
   (D.raw||[]).forEach(r=>{if(r.src!=='thevea'&&alias[r.name])r.name=alias[r.name];});
   // Erster Termin je Person (für Neuzugänge, siehe unten).
   const erster={};(D.thevea.rows||[]).forEach(r=>{const d=r.datum?tvYmd(r.datum):null;if(d&&(!erster[r.name]||d<erster[r.name]))erster[r.name]=d;});
+  // Erster und letzter Termin über alle Quellen (Medifox und thevea).
+  const tvRowYmd=r=>{if(r.datum)return tvYmd(r.datum);if(r.dateKey){const q=String(r.dateKey).split('-');if(q.length===3)return q[0]+'-'+q[1].padStart(2,'0')+'-'+q[2].padStart(2,'0');}return null;};
+  const ersteAll={},letzteAll={},zukunft={};const h0=tvYmd(new Date());let datenAb=null;
+  (D.raw||[]).forEach(r=>{const d=tvRowYmd(r);if(!d||!d.startsWith(jahr+'-'))return;if(!datenAb||d<datenAb)datenAb=d;if(!ersteAll[r.name]||d<ersteAll[r.name])ersteAll[r.name]=d;if(d>h0)zukunft[r.name]=true;else if(!letzteAll[r.name]||d>letzteAll[r.name])letzteAll[r.name]=d;});
+  const ersteAllP=name=>{const A=String(name||'').split(','),nn=tvNorm(A[0]),vn=tvNorm(A.slice(1).join(','));let best=null;Object.keys(ersteAll).forEach(n=>{const B=String(n).split(','),bn=tvNorm(B[0]),bv=tvNorm(B.slice(1).join(','));const ok=n===name||(bn===nn&&bv.slice(0,3)===vn.slice(0,3))||((/^[a-z]\.$/.test(nn)||/^[a-z]\.$/.test(bn))&&nn.charAt(0)===bn.charAt(0)&&vn.split(' ')[0]===bv.split(' ')[0]);if(ok&&(!best||ersteAll[n]<best))best=ersteAll[n];});return best;};
   // 2. Arbeitszeiten aus thevea (Werneck)
   Object.values(D.thevea.personen||{}).forEach(p=>{
     const recs=(az[p.suf]||[]).filter(r=>r&&r.personId===p.id);if(!recs.length)return;
@@ -863,7 +889,7 @@ function tvStammdaten(jahr,az,f4,abwes){
       // Monate vor dem ersten Datensatz: Wer da schon Termine hatte, arbeitete
       // nach demselben Muster – thevea exportiert nur die aktuellen Datensätze.
       if(!recsM.length){const letzterTag=tvYmd(new Date(jahr,mi,0));if(!(erster[p.name]&&erster[p.name]<=letzterTag))continue;recsM=[recs.slice().sort((a,b)=>String(a.validFrom||'').localeCompare(String(b.validFrom||'')))[0]];}
-      t.mh[MN[mi-1]]=r1(tvWochenStd(recsM[0]));
+      t.mh[MN[mi-1]]=r1(tvWochenStdK(recsM[0],p.name));
       const tage=new Date(jahr,mi,0).getDate();let soll=0,anw=0;
       for(let d=1;d<=tage;d++){
         const dt=new Date(jahr,mi-1,d),ymd=tvYmd(dt);if(feier.has(ymd))continue;
@@ -871,16 +897,19 @@ function tvStammdaten(jahr,az,f4,abwes){
         // damals schon Termine hatte (Datensatz wurde später neu angelegt);
         // sonst ist es ein Neuzugang und die Tage davor sind keine Vertragszeit.
         let rec=recs.filter(x=>(!x.validFrom||String(x.validFrom)<=ymd)&&(!x.validUntil||String(x.validUntil)>=ymd)).sort((a,b)=>String(b.validFrom||'').localeCompare(String(a.validFrom||'')))[0];
-        if(!rec){if(ymd<ersterStart&&!(erster[p.name]&&erster[p.name]<=ymd))continue;rec=recsM[0];}
+        if(!rec){const eAll=ersteAllP(p.name);const seit=erster[p.name]&&eAll&&mi>=+erster[p.name].slice(5,7)?eAll:erster[p.name];if(ymd<ersterStart&&!(seit&&seit<=ymd))continue;rec=recsM[0];}
         const wd=TV_WD[dt.getDay()];
-        const min=(rec.zeitspannen||[]).filter(z=>z.wochentag===wd).reduce((s,z)=>s+Math.max(0,tvSpanMin(z.from,z.until)),0);
+        let min=(rec.zeitspannen||[]).filter(z=>z.wochentag===wd).reduce((s,z)=>s+Math.max(0,tvSpanMin(z.from,z.until)),0);
+        const fw=tvFreiWechsel(p.name);if(fw&&min&&fw.includes(wd)&&wd===fw[tvWoche(dt)%2])min=0;
         if(!min)continue;soll+=min;
         const ab=abw.find(a=>String(a.from)<=ymd&&String(a.until)>=ymd),da=!ab;if(da)anw+=min;
         (t.tag=t.tag||{})[ymd]={soll:min,anw:da?min:0,grund:ab?String(ab.abwesenheitGrund||'SONSTIGES'):null};
       }
       t.std[MN[mi-1]]={soll:r1(soll/60),anw:r1(anw/60),q:'thevea'};
     }
-    const cur=recs.find(r=>r.isCurrentlyValid)||recs[0];t.wh=r1(tvWochenStd(cur));t.azQuelle='thevea';
+    const cur=recs.find(r=>r.isCurrentlyValid)||recs[0];t.wh=r1(tvWochenStdK(cur,p.name));t.azQuelle='thevea';
+    // Gültiger Arbeitszeit-Datensatz = noch beschäftigt (z. B. Elternzeit, langer Urlaub).
+    const heuteY=tvYmd(new Date());if(recs.some(r=>r.isCurrentlyValid&&(!r.validUntil||String(r.validUntil)>=heuteY))||abw.some(a=>String(a.until)>=heuteY))t.aktivAz=true;
   });
   // 3. Arbeitszeiten aus Medifox (Kitzingen): Soll-Wochenstunden aus dem
   //    Wochentagsmuster der Tagesdaten. Je Monat und Wochentag gilt die
@@ -940,6 +969,23 @@ function tvStammdaten(jahr,az,f4,abwes){
       }
       if(soll>0)t.std[MN[mi-1]]={soll:r1(soll/60),anw:r1(anw/60),q:'medifox'};
     });
+  });
+  // 4. Ein- und Austritt: Wer erst nach den ersten zwei Wochen der Daten den
+  //    ersten Termin hat, ist unterjährig eingestiegen; wer seit vier Wochen
+  //    keinen Termin und auch keinen künftigen hat, ist ausgeschieden.
+  const grenzeAb=datenAb?tvYmd(new Date(new Date(datenAb+'T12:00:00').getTime()+14*864e5)):null;
+  const grenzeBis=tvYmd(new Date(Date.now()-28*864e5));
+  // Namen aus Medifox („Berlet, Tabea“, „Schmitt, Angie“) und thevea („B., Tabea“,
+  // „Schmitt, Angelina“) gelten als dieselbe Person bei gleichem Nachnamen und
+  // gleichem Vornamen-Anfang bzw. bei Initiale plus gleichem Vornamen.
+  const teile=n=>{const x=String(n||'').split(',');return{nn:tvNorm(x[0]),vn:tvNorm(x.slice(1).join(','))};};
+  const gleich=(a,b)=>{if(a===b)return true;const A=teile(a),B=teile(b);if(!A.vn||!B.vn)return false;const ia=/^[a-z]\.$/.test(A.nn),ib=/^[a-z]\.$/.test(B.nn);if(ia||ib)return A.nn.charAt(0)===B.nn.charAt(0)&&A.vn.split(' ')[0]===B.vn.split(' ')[0];return A.nn===B.nn&&A.vn.slice(0,3)===B.vn.slice(0,3);};
+  const namen=Object.keys(ersteAll);
+  ctrl.forEach(t=>{
+    let a=null,b=null,zk=false;
+    namen.forEach(n=>{if(!gleich(n,t.n))return;if(!a||ersteAll[n]<a)a=ersteAll[n];if(letzteAll[n]&&(!b||letzteAll[n]>b))b=letzteAll[n];if(zukunft[n])zk=true;});
+    t.ab=a&&grenzeAb&&a>grenzeAb?a:null;
+    t.bis=b&&!zk&&!t.aktivAz&&b<grenzeBis?b:null;
   });
   D.ctrl=ctrl;
   D.thevea.stammdaten={aliase:Object.keys(alias).length,thevea:ctrl.filter(t=>/thevea/.test(t.azQuelle||'')).length,medifox:ctrl.filter(t=>/medifox/.test(t.azQuelle||'')).length,neu:ctrl.filter(t=>t.quelle).length};
