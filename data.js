@@ -3030,8 +3030,11 @@ async function mrZusammen(hauptRows){
     const texte=await Promise.all(jsons.map(k=>graphText(MR_ORDNER+k.name).catch(()=>null)));
     texte.forEach(t=>{try{mrAusJson(JSON.parse(String(t||'').replace(/^\uFEFF/,''))).forEach(r=>alle.push(r));}catch(e){}});
   }catch(e){console.warn('Ordner Medifox Rechnungen:',e);}
-  const seen=new Set();
-  return alle.filter((r,i)=>{if(i===0)return true;const key=[r[0],r[3],mrDatum(r[2]),r[9]].join('|');if(seen.has(key))return false;seen.add(key);return true;});
+  // Je Belegnummer zählt der jüngste Stand: die Flow-Dateien kommen zuletzt und ersetzen
+  // die alte Excel-Übersicht (deren Saldo eingefroren ist). Gemahnte Rechnungen heißen
+  // dort „Rechnung M1“ und wären sonst doppelt.
+  const neu=new Map();alle.slice(1).forEach(r=>{if(r&&r[0])neu.set(String(r[0]),r);});
+  return[alle[0]].concat([...neu.values()]);
 }
 function rechnungenAgg(rows){
   const R={total:0,count:0,byType:{},byPrefix:{},byPT:{},rows:[],alle:[],bis:null};
@@ -3041,7 +3044,8 @@ function rechnungenAgg(rows){
     const typ=String(r[6]||'Unbekannt'),nr=String(r[0]||''),prefix=nr.startsWith('K-')?'PHFIP':'KIMOJO';
     const d=mrDatum(r[2]),brutto=parseFloat(r[9])||0,bt=String(r[3]||'');
     if(d){const p=d.split('-');R.alle.push({nr,belegtyp:bt,datum:d,jahr:+p[0],month:+p[1],prefix,typ,brutto,storniert:/^(ja|true|wahr|1)$/i.test(String(r[16]||'')),saldo:parseFloat(r[17])||0});if(!R.bis||d>R.bis)R.bis=d;}
-    const saldo=parseFloat(r[17])||0;if(!saldo)continue;
+    // Forderungen: nur echte, nicht stornierte Rechnungen (Mahnbelege tragen nur die Gebühr)
+    const saldo=parseFloat(r[17])||0;if(!saldo||!/^rechnung/i.test(bt)||/^(ja|true|wahr|1)$/i.test(String(r[16]||'')))continue;
     R.total+=saldo;R.count++;
     (R.byType[typ]=R.byType[typ]||{count:0,saldo:0}).count++;R.byType[typ].saldo+=saldo;
     (R.byPrefix[prefix]=R.byPrefix[prefix]||{count:0,saldo:0}).count++;R.byPrefix[prefix].saldo+=saldo;
