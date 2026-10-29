@@ -763,8 +763,9 @@ function liqTheveaKassenOffen(stand){
 // Rezepte aus dem Kalender. thevea: Rezeptnummer am Termin, offen ist ein Rezept, solange
 // es in der Verordnungswert-Prognose steht (Wert erbracht/offen und Einheiten von dort).
 // Medifox: Rezept = Patient + Verordnungsdatum, offen sind Einheiten ohne „Abgerechnet“.
-// Abrechnungsabstand je Betrieb: fertige, noch nicht abgerechnete Rezepte warten im Median
-// x Tage, der ganze Abstand ist etwa doppelt so lang (7–42 Tage). Restlaufzeit: wie lange
+// Abrechnungsabstand je Betrieb (vom letzten Termin bis zur Rechnung): Wert der fertigen,
+// noch nicht abgerechneten Rezepte geteilt durch den Ø erbrachten Wert je Kalendertag
+// (Warteschlange: Bestand / Durchsatz), 3–42 Tage. Restlaufzeit: wie lange
 // es von einer Behandlung bis zum letzten Termin ihres Rezepts dauert (abgeschlossene Rezepte).
 let liqRzCache=null;
 function liqRezepte(hs){
@@ -815,12 +816,12 @@ function liqRezepte(hs){
     liste.push({key:z.key,site:z.site,betrieb:z.betrieb,src:z.src,erb,plan,fehlt,ende,fertig,alter,zweifel:fertig&&alter>LIQ_ZWEIFEL,tage});
   });
   ['KIMOJO','PHFIP'].forEach(b=>{
-    const w=liste.filter(z=>z.betrieb===b&&z.fertig&&!z.zweifel&&z.alter<=60).map(z=>z.alter);
-    const lag=Math.round(Math.min(42,Math.max(7,2*(med(w)!=null?med(w):7))));
+    const w=liste.filter(z=>z.betrieb===b&&z.fertig&&!z.zweifel),wert=w.reduce((t,z)=>t+z.erb,0);
+    const wt56=[...Array(56)].map((_,i)=>plus(hs,-i)).filter(liqWerktag).length||40,hochTag=((hist[b]||{}).erb56||0)/wt56;
+    const lag=Math.round(Math.min(42,Math.max(3,hochTag?wert/(hochTag*5/7):14)));
     const R=restB[b],rest=R&&R.w?Math.round(R.s/R.w):14;
-    const wt56=[...Array(56)].map((_,i)=>plus(hs,-i)).filter(liqWerktag).length||40;
-    const kal=liste.filter(z=>z.betrieb===b).flatMap(z=>z.tage.map(t=>+t[0]));
-    stat[b]={lag,rest,hochTag:((hist[b]||{}).erb56||0)/wt56,kalBis:kal.length?new Date(Math.max(...kal)):null,nWarten:w.length};
+    const kal=[...G.values()].filter(z=>z.betrieb===b).flatMap(z=>z.fut.map(x=>+x.d));
+    stat[b]={lag,rest,hochTag,kalBis:kal.length?new Date(Math.max(...kal)):null,nWarten:w.length,wartet:wert};
   });
   liste.forEach(z=>{const lag=stat[z.betrieb].lag;const ab=z.fertig?Math.max(+plus(z.ende,lag),+plus(hs,3)):+plus(z.ende,lag);z.abrechnung=new Date(ab);z.zahlung=plus(z.abrechnung,LIQ_ZAHLZIEL);});
   const wert={liste,stat};liqRzCache={key,wert};return wert;
