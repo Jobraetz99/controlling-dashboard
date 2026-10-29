@@ -793,6 +793,8 @@ function liqRezepte(hs){
     if(!z.fut.length&&z.past.length>=2){const e=Math.max(...z.past.map(x=>+x.d));const R=restB[z.betrieb]||(restB[z.betrieb]={s:0,w:0});z.past.forEach(x=>{R.s+=(e-x.d)/LIQ_TAG*x.p;R.w+=x.p;});}
   });
   const taktG=med(lueck)||7;
+  // Medifox kennt die Einheiten je Rezept nicht: typische Zahl aus abgeschlossenen, abgerechneten Rezepten
+  const nTyp={};['KIMOJO','PHFIP'].forEach(b=>{nTyp[b]=med(alle.filter(z=>z.src!=='thevea'&&z.betrieb===b&&!z.fut.length&&z.past.length>=2&&z.past.every(x=>x.billed)).map(z=>z.past.length))||6;});
   alle.forEach(z=>{
     const lastP=z.past.length?new Date(Math.max(...z.past.map(x=>+x.d))):null,lastF=z.fut.length?new Date(Math.max(...z.fut.map(x=>+x.d))):null;
     let erb=0,plan=z.fut.reduce((t,x)=>t+x.p,0),fehlt=0,missing=0,unit=0;
@@ -803,6 +805,8 @@ function liqRezepte(hs){
     }else{
       erb=z.past.filter(x=>!x.billed&&x.d>vor180).reduce((t,x)=>t+x.p,0);
       if(!erb&&!z.fut.length)return;
+      // läuft das Rezept noch, fehlen bis zur typischen Länge noch Einheiten (Kalender reicht nur ~4 Wochen)
+      if(z.fut.length){const alleE=z.past.concat(z.fut);missing=Math.max(0,nTyp[z.betrieb]-alleE.length);unit=alleE.reduce((t,x)=>t+x.p,0)/alleE.length;}
     }
     const takt=z.takt||taktG;
     let ende=lastF||lastP;
@@ -823,7 +827,10 @@ function liqRezepte(hs){
     const kal=[...G.values()].filter(z=>z.betrieb===b).flatMap(z=>z.fut.map(x=>+x.d));
     stat[b]={lag,rest,hochTag,kalBis:kal.length?new Date(Math.max(...kal)):null,nWarten:w.length,wartet:wert};
   });
-  liste.forEach(z=>{const lag=stat[z.betrieb].lag;const ab=z.fertig?Math.max(+plus(z.ende,lag),+plus(hs,3)):+plus(z.ende,lag);z.abrechnung=new Date(ab);z.zahlung=plus(z.abrechnung,LIQ_ZAHLZIEL);});
+  // fertige Rezepte, die schon länger als üblich warten, verteilen sich auf die nächsten Abrechnungstage
+  const nAlt={};liste.forEach(z=>{const lag=stat[z.betrieb].lag;let ab=plus(z.ende,lag);
+    if(z.fertig&&ab<=hs){const i=nAlt[z.betrieb]=(nAlt[z.betrieb]||0)+1;ab=plus(hs,1+i%lag);}
+    z.abrechnung=ab;z.zahlung=plus(ab,LIQ_ZAHLZIEL);});
   const wert={liste,stat};liqRzCache={key,wert};return wert;
 }
 function liqPipeline(betrieb,stand,ende){
@@ -1035,7 +1042,7 @@ function liqReserve(){
   const total=bankSum+ford+offSum;
   let h='';
   // II Forderungen
-  h+=`<section class="sec"><div class="sec-h"><h2>Offene Forderungen</h2><span class="sub">Medifox-Rechnungsübersicht und thevea-Rechnungen</span></div><div class="tbl-wrap"><table><thead><tr><th>Quelle</th><th>Betrieb</th><th>Art</th><th class="r">Rechnungen</th><th class="r">Offen</th><th style="min-width:110px"></th></tr></thead><tbody>`;
+  h+=`<section class="sec"><div class="sec-h"><h2>Offene Forderungen</h2><span class="sub">Medifox-Rechnungsübersicht und thevea-Rechnungen · <a href="theke.html" target="_blank" rel="noopener">Mahnliste der Theke öffnen ↗</a></span></div><div class="tbl-wrap"><table><thead><tr><th>Quelle</th><th>Betrieb</th><th>Art</th><th class="r">Rechnungen</th><th class="r">Offen</th><th style="min-width:110px"></th></tr></thead><tbody>`;
   const mxF=Math.max(...pts.map(x=>x.saldo),...Object.values(reOffen).map(x=>x.offen),1);
   pts.sort((a,b)=>b.saldo-a.saldo).forEach(x=>{const e=BANK_ENT.find(e=>e.pre===x.prefix);h+=`<tr><td class="c-m">Medifox</td><td><span class="site"><span class="dot" style="background:${e.col}"></span>${esc(e.l)}</span></td><td>${esc(x.typ)}</td><td class="r">${n0(x.count)}</td><td class="r"><b>${eur0(x.saldo)}</b></td><td><div class="bar"><i style="width:${x.saldo/mxF*100}%;background:var(--blue)"></i></div></td></tr>`;});
   Object.entries(reOffen).sort((a,b)=>b[1].offen-a[1].offen).forEach(([art,x])=>{h+=`<tr><td class="c-m">thevea</td><td><span class="site"><span class="dot" style="background:var(--primary)"></span>KIMOJO GmbH</span></td><td>${esc(art)}</td><td class="r">${n0(x.n)}</td><td class="r"><b>${eur0(x.offen)}</b></td><td><div class="bar"><i style="width:${x.offen/mxF*100}%;background:var(--blue)"></i></div></td></tr>`;});
