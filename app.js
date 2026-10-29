@@ -1105,13 +1105,21 @@ function setFC(m){fcMode=m;rPage();}
 // ── Planung: laufendes Jahr rollierend (Ist + Plan) oder Folgejahr (Plan) ──
 let planJahrSicht=null;
 function setPJ(j){planJahrSicht=j;rPage();}
+// Geschäftsführergehalt KIMOJO GmbH: Johannes und Kilian je 6.000 € im Monat (Angabe
+// vom 29.10.2026). Die Planungen führen es unterschiedlich (2026: je 6.200 €, 2027: 0),
+// deshalb wird das enthaltene GF-Gehalt (Zeilen „Jo“/„Kili“, dash.gf) herausgerechnet
+// und je nach Schalter der tatsächliche Betrag eingesetzt. Gilt nur für Plan-Monate.
+const GF_GEHALT={KIMOJO:12000};
+let gfMit=(()=>{try{return localStorage.getItem('cockpit.gf')!=='ohne';}catch(e){return true;}})();
+function setGF(v){gfMit=v;try{localStorage.setItem('cockpit.gf',v?'mit':'ohne');}catch(e){}rPage();}
+function gfKorr(betrieb,dash,i){if(betrieb!=='KIMOJO'||!dash)return 0;return(gfMit?GF_GEHALT.KIMOJO:0)-((dash.gf||[])[i]||0);}
 // Planblöcke je Betrieb und Bereich aus einem Dashboard-Plan ({therapie,club}),
 // nach Standortfilter. Gewinn = Einnahmen − Kosten wie im Planblatt.
 function planBloecke(dK,dP){
   const kim=aS==='Alle'||aS==='KIMOJO Gesamt'||aS==='KIMOJO Physio'||aS==='KIMOJO Ergo',pf=aS==='Alle'||aS==='PF im Park';
   const out=[];
   [[dK,'KIMOJO',kim],[dP,'PF im Park',pf]].forEach(([d,l,an])=>{if(!an||!d)return;
-    ['therapie','club'].forEach(b=>{const x=d[b]||{};const ein=MN.map(m=>x['einnahmen_'+m]||0),kos=MN.map(m=>x['kosten_'+m]||0),pers=MN.map(m=>x['personal_'+m]||0);
+    ['therapie','club'].forEach(b=>{const x=d[b]||{},gk=i=>b==='therapie'?gfKorr(l,d,i):0;const ein=MN.map(m=>x['einnahmen_'+m]||0),kos=MN.map((m,i)=>(x['kosten_'+m]||0)+gk(i)),pers=MN.map((m,i)=>(x['personal_'+m]||0)+(x['personal_'+m]?gk(i):0));
       if(!ein.some(v=>v)&&!kos.some(v=>v))return;
       out.push({betrieb:l,bereich:b,ein,kos,gew:ein.map((v,i)=>v-kos[i]),pers});});});
   return out;
@@ -1120,7 +1128,9 @@ const PL_BEREICH={therapie:'Therapie',club:'Club'};
 const sumA=a=>a.reduce((t,v)=>t+v,0);
 function planJahrSchalter(j0,jN,sicht){
   const b=(j,l,ok)=>`<button class="${sicht===j?'a':''}" ${ok?`onclick="setPJ(${j})"`:'disabled style="opacity:.45;cursor:default"'}>${l}</button>`;
-  return`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px"><div class="seg">${b(j0,j0+' · Ist + Plan',true)}${b(j0+1,(j0+1)+' · Plan',!!jN)}</div>${jN?'':`<span class="c-m" style="font-size:12.5px">Keine Planung ${j0+1} gefunden (Datei „… ${j0+1} …“ im Ordner Finanzen/${j0+1} oder neben der Planung ${j0}).</span>`}</div>`;
+  const kimAn=aS==='Alle'||/KIMOJO/.test(aS);
+  const gf=kimAn?`<div class="seg" title="Geschäftsführergehalt KIMOJO GmbH: Johannes und Kilian je 6.000 € im Monat"><button class="${gfMit?'a':''}" onclick="setGF(true)">mit GF-Gehalt</button><button class="${gfMit?'':'a'}" onclick="setGF(false)">ohne GF-Gehalt</button></div><span class="c-m" style="font-size:12px">KIMOJO GmbH · 2 × 6.000 € im Monat</span>`:'';
+  return`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px"><div class="seg">${b(j0,j0+' · Ist + Plan',true)}${b(j0+1,(j0+1)+' · Plan',!!jN)}</div>${gf}${jN?'':`<span class="c-m" style="font-size:12.5px">Keine Planung ${j0+1} gefunden (Datei „… ${j0+1} …“ im Ordner Finanzen/${j0+1} oder neben der Planung ${j0}).</span>`}</div>`;
 }
 function pVorschau(){
   const N=D.planNext,jN=N&&(N.K||N.P)?N.jahr:null,j0=cockpitJahr();
@@ -1160,7 +1170,7 @@ function pPlanFolgejahr(){
   h+=`<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Monat</th><th class="r">Einnahmen</th><th class="r">davon Club</th><th class="r">Kosten</th><th class="r">Gewinn</th><th class="r">Marge</th><th class="r">Vergleich: Plan ${j-1}</th><th class="r">Gewinn kumuliert</th></tr></thead><tbody>`;
   let kum=0;MN.forEach((m,i)=>{kum+=gew[i];const c=club.reduce((t,x)=>t+x.ein[i],0);h+=`<tr><td>${m}</td><td class="r"><b>${eur0(ein[i])}</b></td><td class="r c-m">${c?eur0(c):'—'}</td><td class="r">${eur0(kos[i])}</td><td class="r ${gew[i]>=0?'c-g':'c-r'}"><b>${eur0(gew[i])}</b></td><td class="r">${pctS(ein[i]?gew[i]/ein[i]*100:null)}</td><td class="r c-m">${eur0(vEin[i])}</td><td class="r">${eur0(kum)}</td></tr>`;});
   h+=`<tr class="sum"><td>Jahr</td><td class="r">${eur0(tE)}</td><td class="r">${eur0(tClub)}</td><td class="r">${eur0(tK)}</td><td class="r">${eur0(tG)}</td><td class="r">${pctS(tE?tG/tE*100:null)}</td><td class="r">${eur0(vE)}</td><td></td></tr></tbody></table></div>`;
-  h+=`<p class="hint">Quelle: Blatt „Dashboard ${j}“ bzw. „Dashboard“ der Finanzplanungen ${j} (KIMOJO und Physio und Fitness im Park), Blöcke Therapie und Club, Gewinn = Einnahmen − Kosten. Verglichen wird mit denselben Blöcken der Planung ${j-1} – nicht mit dem Ist, das steht unter „${j-1} · Ist + Plan“. Ändert sich die Planungsdatei, zeigt das Cockpit nach „Aktualisieren“ den neuen Stand.</p></section>`;
+  h+=`<p class="hint">Quelle: Blatt „Dashboard ${j}“ bzw. „Dashboard“ der Finanzplanungen ${j} (KIMOJO und Physio und Fitness im Park), Blöcke Therapie und Club, Gewinn = Einnahmen − Kosten. GF-Gehalt KIMOJO GmbH ${gfMit?'eingerechnet (2 × 6.000 € im Monat, statt des Betrags in der Planung)':'herausgerechnet'}, in beiden Jahren gleich behandelt. Verglichen wird mit denselben Blöcken der Planung ${j-1} – nicht mit dem Ist, das steht unter „${j-1} · Ist + Plan“. Ändert sich die Planungsdatei, zeigt das Cockpit nach „Aktualisieren“ den neuen Stand.</p></section>`;
   return h;
 }
 // Monatsbalken: Einnahmen gestapelt (Therapie, Club), Kosten als Linie, Vorjahresplan gestrichelt.
@@ -1197,7 +1207,7 @@ function vorschauBetriebe(){
   [['KIMOJO','KIMOJO GmbH',kim,D.bwaK,D.planK.dashboard],['PHFIP','PF im Park',pf,D.bwaP,D.planP.dashboard]].forEach(([k,l,an,bwa,pl])=>{
     if(!an||!pl)return;
     const M=MN.map((m,i)=>{const bw=getBWA(bwa,m),q=(blk,x)=>((pl[blk]||{})[x+'_'+m])||0;
-      const plan={th:q('therapie','einnahmen'),cl:q('club','einnahmen'),kos:q('therapie','kosten')+q('club','kosten')};plan.ein=plan.th+plan.cl;plan.gew=plan.ein-plan.kos;
+      const plan={th:q('therapie','einnahmen'),cl:q('club','einnahmen'),kos:q('therapie','kosten')+q('club','kosten')+gfKorr(k,pl,i)};plan.ein=plan.th+plan.cl;plan.gew=plan.ein-plan.kos;
       const useIst=!!bw&&i<cur,ist=bw?{ein:bw.umsatz,kos:bw.gesamtkosten,gew:bw.ergebnis}:null;
       return{m,i,useIst,ist,plan,fc:useIst?ist:plan,erb:erb[k][i]};});
     B.push({k,l,M,istBis:M.reduce((x,d)=>d.useIst?d.i:x,-1)});
@@ -1251,7 +1261,7 @@ function pVorschauJahr(){
   MN.forEach((m,i)=>{const teil=!istIdx[i]&&B.some(b=>b.M[i].useIst);const pill=istIdx[i]?'<span class="pill p-g">Ist</span>':teil?'<span class="pill p-n">teils Ist</span>':i===cur?'<span class="pill p-n">laufend · Plan</span>':i<cur?'<span class="pill p-n">BWA fehlt · Plan</span>':'<span class="pill p-n">Plan</span>';
     h+=`<tr${i===cur?' class="today"':''}><td>${m}</td><td>${pill}</td><td class="r"><b>${eur0(fE[i])}</b></td><td class="r c-m">${eur0(pE[i])}</td><td class="r">${istIdx[i]||teil?dP(fE[i],pE[i]):'<span class="c-m">—</span>'}</td><td class="r">${eur0(fK[i])}</td><td class="r ${fG[i]>=0?'c-g':'c-r'}"><b>${eur0(fG[i])}</b></td><td class="r">${pctS(fE[i]?fG[i]/fE[i]*100:null)}</td><td class="r c-m">${i<=cur&&erbA[i]?eur0(erbA[i]):'—'}</td></tr>`;});
   h+=`<tr class="sum"><td>Jahr</td><td></td><td class="r">${eur0(tFE)}</td><td class="r">${eur0(tPE)}</td><td class="r">${dP(tFE,tPE)}</td><td class="r">${eur0(tFK)}</td><td class="r">${eur0(tFG)}</td><td class="r">${pctS(tFE?tFG/tFE*100:null)}</td><td class="r c-m">${eur0(sumA(erbA))}</td></tr></tbody></table></div>`;
-  h+=`<p class="hint">Ist = BWA des Steuerberaters (ganzer Betrieb, Club eingeschlossen), deshalb steht der Plan als Therapie + Club aus dem Dashboard-Blatt der Finanzplanung ${j} dagegen. Erbracht = Kalenderwert aus thevea und Medifox (nur Behandlungen, ohne Club). Die BWA kommt meist ein bis zwei Monate später; bis dahin zählt der Plan. ${aS==='KIMOJO Physio'||aS==='KIMOJO Ergo'?'Die Planung trennt Physio und Ergo nicht: gezeigt wird die ganze KIMOJO GmbH.':''}</p></section>`;
+  h+=`<p class="hint">Ist = BWA des Steuerberaters (ganzer Betrieb, Club eingeschlossen), deshalb steht der Plan als Therapie + Club aus dem Dashboard-Blatt der Finanzplanung ${j} dagegen. Erbracht = Kalenderwert aus thevea und Medifox (nur Behandlungen, ohne Club). Die BWA kommt meist ein bis zwei Monate später; bis dahin zählt der Plan. GF-Gehalt KIMOJO GmbH in den Plan-Monaten ${gfMit?'mit 2 × 6.000 € im Monat':'herausgerechnet'} (in der Planung ${j} stehen ${(()=>{const g=(D.planK.dashboard&&D.planK.dashboard.gf)||[];const m=g.length?sumA(g)/12:0;return m?'im Schnitt '+eur0(m)+' im Monat':'keine';})()}); die BWA-Monate zeigen das tatsächlich Gebuchte. ${aS==='KIMOJO Physio'||aS==='KIMOJO Ergo'?'Die Planung trennt Physio und Ergo nicht: gezeigt wird die ganze KIMOJO GmbH.':''}</p></section>`;
   return h;
 }
 function vorschauChart(data,label){

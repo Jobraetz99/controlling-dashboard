@@ -766,6 +766,7 @@ async function loadAll(){
       const planAusKName=(planKSheets||[]).find(s=>s.trim().toLowerCase()==='planausgaben');
       if(planAusKName){const planAusK=await getSheet(FILES.planK,planAusKName);if(planAusK)D.planK.ausgaben=parsePlanAusgaben(planAusK);}
     }catch(e){console.warn('Plan KIMOJO:',e);}
+    try{if(D.planK.dashboard)D.planK.dashboard.gf=await planGfLaden(FILES.planK);}catch(e){}
 
     // Plan PHFIP
     try{
@@ -3183,6 +3184,10 @@ async function dateiFuerJahr(id,jahr,drive){
     return y&&y.id||null;
   }catch(e){return null;}
 }
+// GF-Gehalt, das in einer KIMOJO-Planung schon steckt: Zeilen „Jo“ und „Kili“ im Blatt
+// Planausgaben (Name in Spalte B, Januar bis Dezember ab Spalte D).
+function planGfLesen(rows){const g=Array(12).fill(0);(rows||[]).forEach(r=>{const l=String((r||[])[1]||'').trim().toLowerCase();if(l!=='jo'&&l!=='kili')return;for(let i=0;i<12;i++)g[i]+=parseFloat(r[3+i])||0;});return g;}
+async function planGfLaden(id){if(!id)return null;const n=(await getSheetNames(id).catch(()=>[])).find(s=>s.trim().toLowerCase()==='planausgaben');if(!n)return null;return planGfLesen(await getSheet(id,n).catch(()=>null));}
 // Planung eines anderen Jahres (Folgejahr für den Planungsreiter): nur das Dashboard-Blatt
 async function planJahrLaden(jahr){
   const out={};
@@ -3190,6 +3195,7 @@ async function planJahrLaden(jahr){
     const id=await dateiFuerJahr(basis,jahr,driveId);if(!id)continue;
     const rows=await getSheet(id,'Dashboard '+jahr).then(r=>r||getSheet(id,'Dashboard')).catch(()=>null);
     if(rows)out[k]=parsePlanDashboard(rows);
+    if(out[k]&&k==='K')out[k].gf=await planGfLaden(id).catch(()=>null);
   }
   return out;
 }
