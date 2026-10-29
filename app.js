@@ -1137,23 +1137,26 @@ function pPlanFolgejahr(){
   const club=B.filter(x=>x.bereich==='club'),tClub=sumA(S(club,'ein'));
   const pers=sumA(S(B.filter(x=>x.bereich==='therapie'),'pers')),persBasis=sumA(S(B.filter(x=>x.bereich==='therapie'&&x.pers.some(v=>v)),'ein'));
   const vgl=(a,b)=>b?`<span class="pill ${a>=b?'p-g':'p-r'}">${a>=b?'+':''}${n1((a-b)/Math.abs(b)*100)} %</span> zum Plan ${j-1}`:'';
+  // zweiter Vergleich: Hochrechnung des laufenden Jahres (BWA-Ist + Plan, wie unter „${j-1} · Ist + Plan“)
+  const HR=(()=>{try{const {B:VB}=vorschauBetriebe();const t=k=>VB.reduce((x,b)=>x+b.M.reduce((y,d)=>y+d.fc[k],0),0);return VB.length?{ein:t('ein'),gew:t('gew')}:null;}catch(e){return null;}})();
+  const hr=k=>HR?`<div class="s">Hochrechnung ${j-1} (Ist + Plan): <b>${fmK(HR[k])}</b> · ${HR[k]?`<span class="pill ${(k==='ein'?tE:tG)>=HR[k]?'p-g':'p-r'}">${(k==='ein'?tE:tG)>=HR[k]?'+':''}${n1(((k==='ein'?tE:tG)-HR[k])/Math.abs(HR[k])*100)} %</span>`:''}</div>`:'';
   const vglK=(a,b)=>b?`<span class="pill ${a<=b*1.0001?'p-g':'p-n'}">${a>=b?'+':''}${n1((a-b)/Math.abs(b)*100)} %</span> zum Plan ${j-1}`:'';
   let h=`<section class="sec"><div class="sec-h"><h2>Planung ${j}</h2><span class="sub">Finanzplanungen ${j} · ${esc(sn(aS))}</span></div><div class="grid">`;
-  h+=`<div class="kpi big"><div class="l">Einnahmen ${j}</div><div class="v">${fmK(tE)}</div><div class="s">${vgl(tE,vE)}</div><div class="s">davon Club <b>${fmK(tClub)}</b> (${n0(tE?tClub/tE*100:0)} %)</div></div>`;
+  h+=`<div class="kpi big"><div class="l">Einnahmen ${j}</div><div class="v">${fmK(tE)}</div><div class="s">${vgl(tE,vE)}</div>${hr('ein')}<div class="s">davon Club <b>${fmK(tClub)}</b> (${n0(tE?tClub/tE*100:0)} %)</div></div>`;
   h+=`<div class="kpi big"><div class="l">Kosten ${j}</div><div class="v">${fmK(tK)}</div><div class="s">${vglK(tK,vK)}</div>${pers?`<div class="s">Personal KIMOJO Therapie <b>${fmK(pers)}</b> · ${n0(persBasis?pers/persBasis*100:0)} % der Einnahmen</div>`:''}</div>`;
-  h+=`<div class="kpi big"><div class="l">Gewinn ${j}</div><div class="v ${tG>=0?'c-g':'c-r'}">${fmK(tG)}</div><div class="s">${vgl(tG,vG)}</div></div>`;
+  h+=`<div class="kpi big"><div class="l">Gewinn ${j}</div><div class="v ${tG>=0?'c-g':'c-r'}">${fmK(tG)}</div><div class="s">${vgl(tG,vG)}</div>${hr('gew')}</div>`;
   h+=`<div class="kpi big"><div class="l">Marge ${j}</div><div class="v">${pctS(tE?tG/tE*100:null)}</div><div class="s">Plan ${j-1}: <b>${pctS(vE?vG/vE*100:null)}</b></div></div>`;
   h+='</div></section>';
   // Je Betrieb und Bereich
   const zeile=(l,e,k,ve,fett)=>{const g=e-k;return`<tr${fett?' class="sum"':''}><td>${l}</td><td class="r"><b>${eur0(e)}</b></td><td class="r">${eur0(k)}</td><td class="r ${g>=0?'c-g':'c-r'}"><b>${eur0(g)}</b></td><td class="r">${pctS(e?g/e*100:null)}</td><td class="r c-m">${ve?eur0(ve):'—'}</td><td class="r">${ve?`<span class="pill ${e>=ve?'p-g':'p-r'}">${e>=ve?'+':''}${n1((e-ve)/ve*100)} %</span>`:'<span class="pill p-n">neu</span>'}</td></tr>`;};
-  h+=`<section class="sec"><div class="sec-h"><h2>Je Betrieb und Bereich</h2><span class="sub">Jahr ${j} · Einnahmen gegen Plan ${j-1}</span></div><div class="tbl-wrap"><table><thead><tr><th>Bereich</th><th class="r">Einnahmen</th><th class="r">Kosten</th><th class="r">Gewinn</th><th class="r">Marge</th><th class="r">Einnahmen Plan ${j-1}</th><th class="r">Δ</th></tr></thead><tbody>`;
+  h+=`<section class="sec"><div class="sec-h"><h2>Je Betrieb und Bereich</h2><span class="sub">Jahr ${j} · zum Vergleich der Plan ${j-1}</span></div><div class="tbl-wrap"><table><thead><tr><th>Bereich</th><th class="r">Einnahmen</th><th class="r">Kosten</th><th class="r">Gewinn</th><th class="r">Marge</th><th class="r">Vergleich: Plan ${j-1}</th><th class="r">Δ</th></tr></thead><tbody>`;
   ['KIMOJO','PF im Park'].forEach(bt=>{const L=B.filter(x=>x.betrieb===bt);if(!L.length)return;
     L.forEach(x=>{const v=V.find(y=>y.betrieb===bt&&y.bereich===x.bereich);h+=zeile(`<span class="site"><span class="dot" style="background:${x.bereich==='club'?'var(--teal)':'var(--primary)'}"></span>${esc(bt)} · ${PL_BEREICH[x.bereich]}</span>`,sumA(x.ein),sumA(x.kos),v?sumA(v.ein):0);});});
   h+=zeile('Summe',tE,tK,vE,true)+'</tbody></table></div></section>';
   // Monatsverlauf
-  h+=`<section class="sec"><div class="sec-h"><h2>Monatsverlauf ${j}</h2><span class="sub">Einnahmen nach Bereich, Kosten und Plan ${j-1}</span></div>`;
+  h+=`<section class="sec"><div class="sec-h"><h2>Monatsverlauf ${j}</h2><span class="sub">Einnahmen nach Bereich und Kosten ${j}, gestrichelt zum Vergleich der Plan ${j-1}</span></div>`;
   h+=planMonatsChart(MN.map((_,i)=>({th:B.filter(x=>x.bereich==='therapie').reduce((t,x)=>t+x.ein[i],0),cl:club.reduce((t,x)=>t+x.ein[i],0),kos:kos[i],vor:vEin[i]})),j);
-  h+=`<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Monat</th><th class="r">Einnahmen</th><th class="r">davon Club</th><th class="r">Kosten</th><th class="r">Gewinn</th><th class="r">Marge</th><th class="r">Einnahmen Plan ${j-1}</th><th class="r">Gewinn kumuliert</th></tr></thead><tbody>`;
+  h+=`<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Monat</th><th class="r">Einnahmen</th><th class="r">davon Club</th><th class="r">Kosten</th><th class="r">Gewinn</th><th class="r">Marge</th><th class="r">Vergleich: Plan ${j-1}</th><th class="r">Gewinn kumuliert</th></tr></thead><tbody>`;
   let kum=0;MN.forEach((m,i)=>{kum+=gew[i];const c=club.reduce((t,x)=>t+x.ein[i],0);h+=`<tr><td>${m}</td><td class="r"><b>${eur0(ein[i])}</b></td><td class="r c-m">${c?eur0(c):'—'}</td><td class="r">${eur0(kos[i])}</td><td class="r ${gew[i]>=0?'c-g':'c-r'}"><b>${eur0(gew[i])}</b></td><td class="r">${pctS(ein[i]?gew[i]/ein[i]*100:null)}</td><td class="r c-m">${eur0(vEin[i])}</td><td class="r">${eur0(kum)}</td></tr>`;});
   h+=`<tr class="sum"><td>Jahr</td><td class="r">${eur0(tE)}</td><td class="r">${eur0(tClub)}</td><td class="r">${eur0(tK)}</td><td class="r">${eur0(tG)}</td><td class="r">${pctS(tE?tG/tE*100:null)}</td><td class="r">${eur0(vE)}</td><td></td></tr></tbody></table></div>`;
   h+=`<p class="hint">Quelle: Blatt „Dashboard ${j}“ bzw. „Dashboard“ der Finanzplanungen ${j} (KIMOJO und Physio und Fitness im Park), Blöcke Therapie und Club, Gewinn = Einnahmen − Kosten. Verglichen wird mit denselben Blöcken der Planung ${j-1} – nicht mit dem Ist, das steht unter „${j-1} · Ist + Plan“. Ändert sich die Planungsdatei, zeigt das Cockpit nach „Aktualisieren“ den neuen Stand.</p></section>`;
@@ -1177,7 +1180,7 @@ function planMonatsChart(M,j){
   M.forEach((d,i)=>{s+=`<circle cx="${x(i)+bw/2}" cy="${y(d.kos)}" r="3" fill="#1C1C1E" stroke="#fff" stroke-width="1.5"><title>${MN[i]}: Kosten ${eur0(d.kos)}</title></circle>`;});
   s+='</svg>';
   const leg=(st,l)=>`<span><span style="display:inline-block;width:14px;height:10px;${st};border-radius:2px;vertical-align:middle;margin-right:5px"></span>${l}</span>`;
-  const vorL=M.vorLabel||'Einnahmen Plan '+(j-1);
+  const vorL=M.vorLabel||'Vergleich: Einnahmen Plan '+(j-1);
   s+=`<div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center;margin-top:8px;font-size:11.5px;color:var(--muted);font-weight:600">${M.some(d=>d.ist)?leg('background:#8E2A22','Einnahmen Ist (BWA)'):''}${leg('background:#BE3A30;opacity:.85',M.some(d=>d.ist)?'Plan Therapie':'Einnahmen Therapie')}${M.some(d=>!d.ist&&d.cl)?leg('background:#2E767C;opacity:.85',M.some(d=>d.ist)?'Plan Club':'Einnahmen Club'):''}${leg('height:3px;background:#1C1C1E','Kosten')}${leg('height:3px;background:#3C5A80;opacity:.7',vorL)}</div>`;
   return s;
 }
