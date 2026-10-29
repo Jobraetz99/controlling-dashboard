@@ -859,6 +859,7 @@ async function loadAll(){
     catch(e){console.warn('Kennzahlen:',e);}
     D.trackerTage={physio:tKP?parseTrackerTage(tKP):[],ergo:tKE?parseTrackerTage(tKE):[],phfip:tPP?parseTrackerTage(tPP):[]};
     try{lt.textContent='Lade Club-Gespräche...';D.mw=await mwLaden();}catch(e){console.warn('MyWellness:',e);D.mw=[];}
+    try{D.mg=await mgLaden();}catch(e){console.warn('Club-Gruppen:',e);D.mg={};}
 
     lt.textContent='Aufbau...';
     buildNameMap();
@@ -2777,6 +2778,34 @@ async function mwLaden(){
   const key={};alle.forEach(e=>{const k=(e.id||e.name)+'|'+e.stufe;if(!key[k]||key[k].dt<e.dt)key[k]=e;});
   return Object.values(key).sort((a,b)=>a.dt-b.dt);
 }
+// ═══ CLUB-BESTAND (Gruppen im MyWellness-CRM) ═══════════════════════════
+// Der MyWellness-Flow legt je Club stündlich ab:
+//   MyWellness/<Club>/Gruppen/<Gruppen-Id>.json                 aktueller Stand
+//   MyWellness/<Club>/Gruppen/Verlauf/<yyyy-MM>/<dd> <Id>.json   letzter Stand des Tages
+// Inhalt {id, name, anzahl, stand, mitglieder:[{id, name}]}. Zählweise wie im
+// Verantwortlichen-Dashboard: Präventionskurs = Name mit „Prävention“, Club = Name
+// mit „Smart“ oder „Starter“ (kein Kurs). Andere Gruppen zählen nicht. Köpfe je
+// Mitglieder-Id, wer in zwei Gruppen steht, zählt einmal.
+function mgArt(name){const s=String(name||'');if(/pr[aä]vention/i.test(s))return 'praev';if(/smart|starter/i.test(s))return 'club';return null;}
+function mgParse(t){try{const o=JSON.parse(String(t||'').replace(/^\uFEFF/,''));if(!o||o.id==null||Array.isArray(o))return null;
+  return{id:o.id,name:String(o.name||''),anzahl:+o.anzahl||0,stand:o.stand||'',mitglieder:Array.isArray(o.mitglieder)?o.mitglieder.filter(m=>m&&m.id!=null&&String(m.id)!=='').map(m=>String(m.id)):[]};}catch(e){return null;}}
+function mgKoepfe(gruppen,art){const ids=new Set();let ohne=0;(gruppen||[]).filter(g=>mgArt(g.name)===art).forEach(g=>{if(g.mitglieder.length)g.mitglieder.forEach(i=>ids.add(i));else ohne+=g.anzahl;});return{n:ids.size+ohne,ids};}
+async function mgLaden(){
+  const out={};const orte=(await graphKinder(MW_DIR)).filter(k=>k.folder&&!/^paket$/i.test(k.name));
+  const lade=async(pfad,filter)=>{const d=(await graphKinder(pfad).catch(()=>[])).filter(k=>k.file&&/\.json$/i.test(k.name)&&(!filter||filter(k.name)));
+    return(await Promise.all(d.map(k=>graphText(pfad+k.name).catch(()=>null)))).map(mgParse).filter(Boolean);};
+  const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  for(const o of orte){
+    const basis=MW_DIR+o.name+'/Gruppen/';const gruppen=await lade(basis);if(!gruppen.length)continue;
+    // Vergleichsstand vor 7 Tagen (Tagesdatei im Verlauf), sonst null
+    const v=new Date();v.setDate(v.getDate()-7);const vi=iso(v);
+    const vorher=await lade(basis+'Verlauf/'+vi.slice(0,7)+'/',n=>n.startsWith(vi.slice(8,10)+' '));
+    const stand=gruppen.map(g=>g.stand).filter(Boolean).sort().slice(-1)[0]||'';
+    out[o.name]={gruppen,stand,vorher:vorher.length?vorher:null,vorherTag:vi};
+  }
+  return out;
+}
+
 // Standortfilter für MyWellness-Einträge (Ordnername Werneck/Kitzingen).
 function mwPasst(e){
   if(aS==='Alle')return true;

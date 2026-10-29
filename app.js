@@ -185,6 +185,35 @@ function secAnfragen(){
   return h+'</section>';
 }
 
+// 3a · Club-Bestand jetzt: Mitglieder und Präventionskurse aus den CRM-Gruppen
+//      (mgLaden), neu in den letzten 7 Tagen aus dem Gruppenverlauf. Solange es
+//      noch keinen Stand von vor 7 Tagen gibt, stehen dort die Abschlüsse aus den
+//      Gesprächen der letzten 7 Tage – mit Hinweis, woher die Zahl kommt.
+function clubBestand(){
+  const orte=Object.keys(D.mg||{}).filter(o=>mwPasst({standort:o})).sort();
+  if(!orte.length)return '';
+  const v7=plusTage(heute(),-7),mw7=(D.mw||[]).filter(mwPasst).filter(e=>e.dt>=v7);
+  const zeilen=orte.map(o=>{const q=D.mg[o];const r={o,stand:q.stand,verlauf:!!q.vorher};
+    ['club','praev'].forEach(a=>{const jetzt=mgKoepfe(q.gruppen,a);r[a]=jetzt.n;
+      if(q.vorher){const alt=mgKoepfe(q.vorher,a).ids;r[a+'Neu']=[...jetzt.ids].filter(i=>!alt.has(i)).length;r[a+'Raus']=[...alt].filter(i=>!jetzt.ids.has(i)).length;}
+      else r[a+'Neu']=mw7.filter(e=>e.standort===o&&(a==='club'?e.erg==='club':e.erg==='praev8'||e.erg==='praev16')).length;});
+    return r;});
+  const S=k=>zeilen.reduce((t,r)=>t+(r[k]||0),0),alleVerlauf=zeilen.every(r=>r.verlauf);
+  const stand=zeilen.map(r=>r.stand).filter(Boolean).sort().slice(-1)[0];
+  const neuS=a=>alleVerlauf?`neu in 7 Tagen <b>+${n0(S(a+'Neu'))}</b> · nicht mehr dabei <b>${n0(S(a+'Raus'))}</b>`:`Abschlüsse letzte 7 Tage <b>${n0(S(a+'Neu'))}</b>`;
+  let h=`<section class="sec"><div class="sec-h"><h2>Club-Bestand</h2><span class="sub">jetzt · MyWellness-Gruppen${stand?' · Stand '+esc(new Date(stand).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}))+' Uhr':''}</span></div>`;
+  h+='<div class="grid">'+
+    `<div class="kpi"><div class="l">Club-Mitglieder</div><div class="v c-g">${n0(S('club'))}</div><div class="s">${neuS('club')}</div></div>`+
+    `<div class="kpi"><div class="l">In Präventionskursen</div><div class="v">${n0(S('praev'))}</div><div class="s">${neuS('praev')}</div></div>`+
+    `<div class="kpi"><div class="l">Neu letzte 7 Tage</div><div class="v">${n0(S('clubNeu')+S('praevNeu'))}</div><div class="s">Club <b>${n0(S('clubNeu'))}</b> · Prävention <b>${n0(S('praevNeu'))}</b>${alleVerlauf?'':' · aus den Gesprächen'}</div></div>`+
+    '</div>';
+  if(orte.length>1){
+    h+=`<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Club</th><th class="r">Mitglieder</th><th class="r">Präventionskurse</th><th class="r">Neu Club (7 Tage)</th><th class="r">Neu Prävention (7 Tage)</th></tr></thead><tbody>${zeilen.map(r=>`<tr><td>${esc(r.o)}</td><td class="r"><b>${n0(r.club)}</b></td><td class="r"><b>${n0(r.praev)}</b></td><td class="r">${n0(r.clubNeu)}</td><td class="r">${n0(r.praevNeu)}</td></tr>`).join('')}<tr class="sum"><td>Summe</td><td class="r">${n0(S('club'))}</td><td class="r">${n0(S('praev'))}</td><td class="r">${n0(S('clubNeu'))}</td><td class="r">${n0(S('praevNeu'))}</td></tr></tbody></table></div>`;
+  }
+  h+=`<p class="hint">Personen in den CRM-Gruppen, wie im Verantwortlichen-Dashboard: Club = Gruppen mit „Smart“ oder „Starter“ im Namen, Prävention = Gruppen mit „Präventionskurs“; wer in zwei Gruppen steht, zählt einmal. Andere Gruppen (z. B. 12/24 Monate Mitgliedschaft, T-Rena, RVF) zählen nicht. ${alleVerlauf?'Neu = in den Gruppen, aber nicht im Stand von vor 7 Tagen.':'Der Gruppenverlauf wird erst seit dem 29.10.2026 mitgeschrieben; bis es einen Stand von vor 7 Tagen gibt, zeigt „neu“ die Abschlüsse aus den Gesprächen der letzten 7 Tage.'}</p>`;
+  return h+'</section>';
+}
+
 // 3 · Club-Abschlüsse aus den MyWellness-Gesprächen (1.–3. Gespräch).
 function secClub(){
   const mw=(D.mw||[]).filter(mwPasst);
@@ -192,7 +221,8 @@ function secClub(){
   const zr=mw.filter(e=>e.dt.getFullYear()===jahr&&monthNums.includes(e.dt.getMonth()+1));
   const mo=montag(heute()),wo=mw.filter(e=>e.dt>=mo);
   const c=(arr,...ks)=>arr.filter(e=>ks.includes(e.erg)).length;
-  let h=`<section class="sec"><div class="sec-h"><h2>Club-Abschlüsse</h2><span class="sub">${esc(zeitraumLabel())} · Gespräche nach Rezeptende</span></div>`;
+  let h=clubBestand();
+  h+=`<section class="sec"><div class="sec-h"><h2>Club-Abschlüsse</h2><span class="sub">${esc(zeitraumLabel())} · Gespräche nach Rezeptende</span></div>`;
   if(!mw.length)return h+'<div class="empty">Noch keine MyWellness-Gespräche für die aktuelle Auswahl.</div></section>';
   const ab=zr.filter(e=>e.ab).length,quote=zr.length?ab/zr.length*100:null;
   h+='<div class="grid">'+
