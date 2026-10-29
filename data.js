@@ -908,7 +908,10 @@ const KENN_DIR='/12_Code/Patientenchecker/Dateien Export/kennzahlen/';
 // mit telOrt liest nur "telOrt[<Standort>]" — fehlt das, bleibt die Telefonie
 // leer, statt die Zahl beider Standorte als ihre auszugeben.
 const PM_QUELLEN=[
-  {q:'werneck', dir:KENN_DIR, telOrt:'Werneck'}
+  {q:'werneck', dir:KENN_DIR, telOrt:'Werneck'},
+  // Seit 29.10.2026: derselbe Patientenchecker im Modus ?standort=kitzingen,
+  // gerechnet aus den Medifox-Exporten, geschrieben in einen eigenen Ordner.
+  {q:'kitzingen', dir:'/12_Code/Patientenchecker/Dateien Export Kitzingen/kennzahlen/', telOrt:'Kitzingen'}
 ];
 function pmTelFuer(qk,t){
   const qu=PM_QUELLEN.find(x=>x.q===qk);
@@ -919,7 +922,7 @@ const PM_BETRIEBE=[
   {k:'alle',     l:'Alle',           q:null,      locs:null},
   {k:'kphysio',  l:'KIMOJO Physio',  q:'werneck', locs:['wp']},
   {k:'kergo',    l:'KIMOJO Ergo',    q:'werneck', locs:['we']},
-  {k:'phfip',    l:'PhFiP',          q:null,      locs:null}
+  {k:'phfip',    l:'PhFiP',          q:'kitzingen', locs:null}
 ];
 function pmHatQuelle(b){return!!(b&&b.q&&PM_QUELLEN.some(x=>x.q===b.q));}
 let pmBetrieb='alle';
@@ -1457,7 +1460,7 @@ function pmZeitLeiste(B,Z,werktage,tage){
     +'</div>';
   if(fehlt>0)h+='<div class="cd" style="margin-bottom:16px;font-size:12.5px;color:var(--muted);line-height:1.7">'
     +'An <b style="color:var(--dark)">'+fehlt+'</b> Werktag'+(fehlt===1?'':'en')+' des Zeitraums liegen keine '
-    +'Standort- und Aufgabenzahlen vor. Die entstehen nur, während das Praxismanagement Werneck '
+    +'Standort- und Aufgabenzahlen vor. Die entstehen nur, während der Patientenchecker des Standorts '
     +'geöffnet ist — an einem solchen Tag wurde es nicht geöffnet. Die Zahlen unten beziehen sich '
     +'auf die '+Z.locTage+' vorhandenen Tage und sind für diese richtig; als Monatsbild sind sie '
     +'unvollständig. Telefoniezahlen sind davon nicht betroffen, sie kommen aus dem Webex-Export.'
@@ -1512,7 +1515,7 @@ function rPraxis(){
          +'<span class="soon-tag">Fassung '+fv+' nicht lesbar</span>'
         :'<h3>Noch keine Kennzahlen</h3>'
          +'<p>Die Datei <code>kennzahlen-'+kennMonatStr(new Date())+'.json</code> liegt noch nicht '
-         +'im Export-Ordner. Sie entsteht, sobald das Praxismanagement Werneck einmal geöffnet wurde.</p>'
+         +'im Export-Ordner. Sie entsteht, sobald der Patientenchecker des Standorts einmal geöffnet wurde.</p>'
          +'<span class="soon-tag">Wartet auf Daten</span>')
       +'</div>';
     return;
@@ -1538,7 +1541,7 @@ function rPraxis(){
   if(!Z.locTage&&!Z.telTage){
     h+='<div class="soon"><div class="soon-ico">📭</div><h3>Keine Daten in diesem Zeitraum</h3>'
       +'<p>Für '+B.label+' liegt in der Kennzahlendatei nichts. Die Reihe beginnt mit dem Tag, '
-      +'an dem das Praxismanagement Werneck zum ersten Mal mit dieser Rechnung geladen wurde.</p>'
+      +'an dem der Patientenchecker des Standorts zum ersten Mal mit dieser Rechnung geladen wurde.</p>'
       +'<span class="soon-tag">Leerer Zeitraum</span></div>';
     el.innerHTML=h;return;
   }
@@ -1560,7 +1563,7 @@ function rPraxis(){
   h+='<div class="hk"><div class="hk-l">Telefonannahmequote</div>'
     +'<div class="hk-v">'+(Z.quote==null?'–':Z.quote+'%')+'</div>'
     +'<div class="hk-sub">'+(Z.telTage?Z.tel.wsAn+' von '+Z.tel.ws+' in der Warteschlange · Ziel '+PM_ZIEL_QUOTE+' %'+zus
-      :'Für Werneck allein liegt keine Telefonie vor. Sie entsteht, sobald der Patientenchecker einmal geöffnet wurde.')+'</div></div>';
+      :'Für diesen Standort allein liegt keine Telefonie vor. Sie entsteht, sobald der Patientenchecker einmal geöffnet wurde.')+'</div></div>';
   h+='<div class="hk"><div class="hk-l">Termine vereinbart</div>'
     +'<div class="hk-v">'+(tr&&tr.vereinbart!=null?tr.vereinbart:pmLeer)+'</div>'
     +'<div class="hk-sub">'+(tr?(tr.neu!=null?'davon '+tr.neu+' neu · ':'')+'an '+tr.tage+' Tag'+(tr.tage===1?'':'en')+' eingetragen'
@@ -2092,8 +2095,8 @@ function rPraxis(){
     +'Tracker und werden von Hand eingetragen. Ein Tag ohne Eintrag steht als „keine Eingabe" da und '
     +'nicht als 0 — ein vergessener Eintrag sähe sonst aus wie ein katastrophaler Tag. '
     +'„Neuaufnahmen" (Physio) und „Neuanfragen" (Ergo) bedeuten dasselbe und sind zusammengezählt.<br>'
-    +'<b style="color:var(--dark)">Alles übrige</b> kommt aus der Kennzahlendatei, die das '
-    +'Praxismanagement Werneck nach jedem Laden schreibt. Jede Zahl ist dieselbe, die dort im Reiter '
+    +'<b style="color:var(--dark)">Alles übrige</b> kommt aus der Kennzahlendatei, die der '
+    +'Patientenchecker des Standorts nach jedem Laden schreibt. Jede Zahl ist dieselbe, die dort im Reiter '
     +'steht; hier wird nichts nachgerechnet. Standort- und Aufgabenzahlen entstehen nur, während das '
     +'Dashboard offen ist — fehlt ein Werktag in der Reihe, hat es an dem Tag niemand geöffnet. '
     +'Telefoniezahlen kommen aus dem Webex-Export und werden bei jedem Lauf für den ganzen Monat neu '
