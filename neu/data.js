@@ -358,6 +358,18 @@ function tvWochenStd(rec){return(rec&&rec.zeitspannen||[]).reduce((s,z)=>s+Math.
 // zweite Tag. Schlüssel = Name wie im Export, klein geschrieben.
 const TV_FREI_WECHSEL={'lommel, paulina':['MONTAG','FREITAG']};
 function tvFreiWechsel(name){return TV_FREI_WECHSEL[tvNorm(name)]||null;}
+// Welcher der beiden Wechseltage in der Woche von dt frei ist: Der Tag mit
+// Terminen ist Arbeitstag; sonst gilt ein Tag mit eingetragener Abwesenheit
+// (Krankheit, Urlaub) als Arbeitstag; erst wenn beides nichts entscheidet,
+// wechselt es nach Kalenderwoche (gerade KW erster Tag frei, ungerade zweiter).
+function tvFreierTag(fw,dt,terminTage,abw){
+  const mo=new Date(dt.getFullYear(),dt.getMonth(),dt.getDate()-((dt.getDay()+6)%7));
+  const tagVon=wd=>{const i=TV_WD.indexOf(wd);const d=new Date(mo);d.setDate(mo.getDate()+((i+6)%7));return tvYmd(d);};
+  const score=y=>(terminTage&&terminTage.has(y)?2:0)+((abw||[]).some(a=>String(a.from)<=y&&String(a.until)>=y)?1:0);
+  const s0=score(tagVon(fw[0])),s1=score(tagVon(fw[1]));
+  if(s0>s1)return fw[1];if(s1>s0)return fw[0];
+  return fw[tvWoche(dt)%2];
+}
 function tvWochenStdK(rec,name){
   const w=tvWochenStd(rec),k=tvFreiWechsel(name);if(!k)return w;
   const tag=wd=>(rec&&rec.zeitspannen||[]).filter(z=>z.wochentag===wd).reduce((s,z)=>s+Math.max(0,tvSpanMin(z.from,z.until)),0)/60;
@@ -403,6 +415,7 @@ function tvStammdaten(jahr,az,f4,abwes){
     if(!t){t={n:p.name,s:p.standort,b:p.standort==='KIMOJO Ergo'?'Ergo':'Physio',wh:0,mh:{},quelle:'thevea'};ctrl.push(t);}
     t.mh=t.mh||{};t.std=t.std||{};
     const abw=(abwes[p.suf]||[]).filter(a=>a&&a.personId===p.id);
+    const terminTage=new Set((D.thevea.rows||[]).filter(r=>r.name===p.name&&r.datum&&r.kind!=='reserviert').map(r=>tvYmd(r.datum)));
     const ersterStart=recs.map(x=>String(x.validFrom||'')).filter(Boolean).sort()[0]||'';
     for(let mi=1;mi<=12;mi++){
       let recsM=recs.filter(x=>tvGiltIm(x,jahr,mi)).sort((a,b)=>String(b.validFrom||'').localeCompare(String(a.validFrom||'')));
@@ -420,7 +433,7 @@ function tvStammdaten(jahr,az,f4,abwes){
         if(!rec){const eAll=ersteAllP(p.name);const seit=erster[p.name]&&eAll&&mi>=+erster[p.name].slice(5,7)?eAll:erster[p.name];if(ymd<ersterStart&&!(seit&&seit<=ymd))continue;rec=recsM[0];}
         const wd=TV_WD[dt.getDay()];
         let min=(rec.zeitspannen||[]).filter(z=>z.wochentag===wd).reduce((s,z)=>s+Math.max(0,tvSpanMin(z.from,z.until)),0);
-        const fw=tvFreiWechsel(p.name);if(fw&&min&&fw.includes(wd)&&wd===fw[tvWoche(dt)%2])min=0;
+        const fw=tvFreiWechsel(p.name);if(fw&&min&&fw.includes(wd)&&wd===tvFreierTag(fw,dt,terminTage,abw))min=0;
         if(!min)continue;soll+=min;
         const ab=abw.find(a=>String(a.from)<=ymd&&String(a.until)>=ymd),da=!ab;if(da)anw+=min;
         (t.tag=t.tag||{})[ymd]={soll:min,anw:da?min:0,grund:ab?String(ab.abwesenheitGrund||'SONSTIGES'):null};
@@ -751,7 +764,7 @@ async function loadAll(){
 
     // Rechnungsübersicht
     const rechnungenData=await rechnungenP;
-    D.rechnungen=rechnungenAgg(rechnungenData);if(false){
+    D.rechnungen=rechnungenAgg(await mrZusammen(rechnungenData));if(false){
     if(rechnungenData&&rechnungenData.length>1){
       for(let i=1;i<rechnungenData.length;i++){
         const r=rechnungenData[i];if(!r)continue;
@@ -2891,14 +2904,44 @@ function bankVoll(rows){
   }
   return out;
 }
-// Medifox-Rechnungsübersicht: Rechnungsnummern mit „K-“ gehören zu Kitzingen
-// (sie gehen auf dem PF-im-Park-Konto ein), Nummern ohne Präfix zu KIMOJO.
+// Medifox-Rechnungsübersicht (Abrechnung → Rechnungsübersicht → Export):
+// Rechnungsnummern mit „K-“ gehören zu Kitzingen (PF im Park), Nummern ohne
+// Präfix zu KIMOJO. Spalten werden über die Kopfzeile gefunden, damit auch
+// Exporte mit anderer Spaltenfolge passen.
+const MR_SPALTEN=['Nr','NrClean','Belegdatum','Belegtyp','Verordnungsdatum','Kostentraeger','KostentraegerTyp','Patientennummer','Patient','Brutto','USt','Netto','USt5','USt7','USt16','USt19','Storniert','Saldo'];
+const MR_ORDNER='/12_Code/Controlling/Medifox Rechnungen/';
+function mrNorm(rows){
+  if(!rows||rows.length<2)return[];
+  const h=(rows[0]||[]).map(x=>String(x||'').replace(/[^a-z0-9]/gi,'').toLowerCase());
+  const idx=MR_SPALTEN.map(n=>h.indexOf(n.toLowerCase()));
+  if(idx[0]<0||idx[2]<0||idx[9]<0)return[];
+  return rows.slice(1).filter(r=>r&&r[idx[0]]!=null&&r[idx[0]]!=='').map(r=>idx.map(i=>i<0?null:r[i]));
+}
+function mrDatum(v){
+  if(typeof v==='number'&&v>40000){const d=new Date(Math.round((v-25569)*86400000));return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'-'+String(d.getUTCDate()).padStart(2,'0');}
+  const s=String(v||'');let m=s.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);if(m)return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+  m=s.match(/(\d{4})-(\d{2})-(\d{2})/);return m?m[1]+'-'+m[2]+'-'+m[3]:null;
+}
+// Hauptdatei (FILES.rechnungen) plus alle Exporte im Ordner „Medifox Rechnungen“,
+// doppelte Belege (gleiche Nummer, Belegtyp, Datum, Betrag) zählen einmal.
+async function mrZusammen(hauptRows){
+  const alle=[MR_SPALTEN].concat(mrNorm(hauptRows));
+  try{
+    const kinder=(await graphKinder(MR_ORDNER)).filter(k=>/\.xlsx$/i.test(k.name||''));
+    for(const k of kinder){try{const sh=await getSheetNames(k.id);const rows=await getSheet(k.id,(sh&&sh[0])||'Tabelle1');mrNorm(rows).forEach(r=>alle.push(r));}catch(e){console.warn('Medifox-Rechnungen',k.name,e);}}
+  }catch(e){console.warn('Ordner Medifox Rechnungen:',e);}
+  const seen=new Set();
+  return alle.filter((r,i)=>{if(i===0)return true;const key=[r[0],r[3],mrDatum(r[2]),r[9]].join('|');if(seen.has(key))return false;seen.add(key);return true;});
+}
 function rechnungenAgg(rows){
-  const R={total:0,count:0,byType:{},byPrefix:{},byPT:{},rows:[]};
+  const R={total:0,count:0,byType:{},byPrefix:{},byPT:{},rows:[],alle:[],bis:null};
   if(!rows||rows.length<2)return R;
   for(let i=1;i<rows.length;i++){
-    const r=rows[i];if(!r)continue;const saldo=parseFloat(r[17])||0;if(!saldo)continue;
+    const r=rows[i];if(!r)continue;
     const typ=String(r[6]||'Unbekannt'),nr=String(r[0]||''),prefix=nr.startsWith('K-')?'PHFIP':'KIMOJO';
+    const d=mrDatum(r[2]),brutto=parseFloat(r[9])||0,bt=String(r[3]||'');
+    if(d){const p=d.split('-');R.alle.push({nr,belegtyp:bt,datum:d,jahr:+p[0],month:+p[1],prefix,typ,brutto,storniert:/^(ja|true|wahr|1)$/i.test(String(r[16]||'')),saldo:parseFloat(r[17])||0});if(!R.bis||d>R.bis)R.bis=d;}
+    const saldo=parseFloat(r[17])||0;if(!saldo)continue;
     R.total+=saldo;R.count++;
     (R.byType[typ]=R.byType[typ]||{count:0,saldo:0}).count++;R.byType[typ].saldo+=saldo;
     (R.byPrefix[prefix]=R.byPrefix[prefix]||{count:0,saldo:0}).count++;R.byPrefix[prefix].saldo+=saldo;

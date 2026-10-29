@@ -838,6 +838,18 @@ function tvWochenStd(rec){return(rec&&rec.zeitspannen||[]).reduce((s,z)=>s+Math.
 // zweite Tag. Schlüssel = Name wie im Export, klein geschrieben.
 const TV_FREI_WECHSEL={'lommel, paulina':['MONTAG','FREITAG']};
 function tvFreiWechsel(name){return TV_FREI_WECHSEL[tvNorm(name)]||null;}
+// Welcher der beiden Wechseltage in der Woche von dt frei ist: Der Tag mit
+// Terminen ist Arbeitstag; sonst gilt ein Tag mit eingetragener Abwesenheit
+// (Krankheit, Urlaub) als Arbeitstag; erst wenn beides nichts entscheidet,
+// wechselt es nach Kalenderwoche (gerade KW erster Tag frei, ungerade zweiter).
+function tvFreierTag(fw,dt,terminTage,abw){
+  const mo=new Date(dt.getFullYear(),dt.getMonth(),dt.getDate()-((dt.getDay()+6)%7));
+  const tagVon=wd=>{const i=TV_WD.indexOf(wd);const d=new Date(mo);d.setDate(mo.getDate()+((i+6)%7));return tvYmd(d);};
+  const score=y=>(terminTage&&terminTage.has(y)?2:0)+((abw||[]).some(a=>String(a.from)<=y&&String(a.until)>=y)?1:0);
+  const s0=score(tagVon(fw[0])),s1=score(tagVon(fw[1]));
+  if(s0>s1)return fw[1];if(s1>s0)return fw[0];
+  return fw[tvWoche(dt)%2];
+}
 function tvWochenStdK(rec,name){
   const w=tvWochenStd(rec),k=tvFreiWechsel(name);if(!k)return w;
   const tag=wd=>(rec&&rec.zeitspannen||[]).filter(z=>z.wochentag===wd).reduce((s,z)=>s+Math.max(0,tvSpanMin(z.from,z.until)),0)/60;
@@ -883,6 +895,7 @@ function tvStammdaten(jahr,az,f4,abwes){
     if(!t){t={n:p.name,s:p.standort,b:p.standort==='KIMOJO Ergo'?'Ergo':'Physio',wh:0,mh:{},quelle:'thevea'};ctrl.push(t);}
     t.mh=t.mh||{};t.std=t.std||{};
     const abw=(abwes[p.suf]||[]).filter(a=>a&&a.personId===p.id);
+    const terminTage=new Set((D.thevea.rows||[]).filter(r=>r.name===p.name&&r.datum&&r.kind!=='reserviert').map(r=>tvYmd(r.datum)));
     const ersterStart=recs.map(x=>String(x.validFrom||'')).filter(Boolean).sort()[0]||'';
     for(let mi=1;mi<=12;mi++){
       let recsM=recs.filter(x=>tvGiltIm(x,jahr,mi)).sort((a,b)=>String(b.validFrom||'').localeCompare(String(a.validFrom||'')));
@@ -900,7 +913,7 @@ function tvStammdaten(jahr,az,f4,abwes){
         if(!rec){const eAll=ersteAllP(p.name);const seit=erster[p.name]&&eAll&&mi>=+erster[p.name].slice(5,7)?eAll:erster[p.name];if(ymd<ersterStart&&!(seit&&seit<=ymd))continue;rec=recsM[0];}
         const wd=TV_WD[dt.getDay()];
         let min=(rec.zeitspannen||[]).filter(z=>z.wochentag===wd).reduce((s,z)=>s+Math.max(0,tvSpanMin(z.from,z.until)),0);
-        const fw=tvFreiWechsel(p.name);if(fw&&min&&fw.includes(wd)&&wd===fw[tvWoche(dt)%2])min=0;
+        const fw=tvFreiWechsel(p.name);if(fw&&min&&fw.includes(wd)&&wd===tvFreierTag(fw,dt,terminTage,abw))min=0;
         if(!min)continue;soll+=min;
         const ab=abw.find(a=>String(a.from)<=ymd&&String(a.until)>=ymd),da=!ab;if(da)anw+=min;
         (t.tag=t.tag||{})[ymd]={soll:min,anw:da?min:0,grund:ab?String(ab.abwesenheitGrund||'SONSTIGES'):null};

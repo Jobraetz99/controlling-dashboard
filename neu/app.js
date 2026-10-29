@@ -32,7 +32,7 @@ function setM(m){aM=m;RA();}
 function setS(s){aS=s;RA();}
 
 // ── Helfer ───────────────────────────────────────────────────────────────
-const SITE_COL={'KIMOJO Physio':'var(--primary)','KIMOJO Ergo':'var(--accent)','PF im Park':'var(--teal)'};
+const SITE_COL={'KIMOJO Physio':'var(--primary)','KIMOJO Ergo':'var(--accent)','PF im Park':'var(--teal)','KIMOJO (Medifox)':'var(--primary)'};
 const n0=x=>Math.round(x||0).toLocaleString('de-DE');
 const n1=x=>(Math.round((x||0)*10)/10).toLocaleString('de-DE',{minimumFractionDigits:1,maximumFractionDigits:1});
 const eur0=x=>n0(x)+' €';
@@ -121,35 +121,49 @@ function secUmsatz(){
 
 // 2 · Terminanfragen aus dem Weekly Tracker: „Termine vereinbart“ je Tag
 //     und davon Neuanfragen. Eine leere Zeile ist kein Tag mit null Terminen.
+let anfrTag=null;// gewählter Tag im Block Terminanfragen (null = letzter Eintrag)
+function anfrQuellen(){const tt=D.trackerTage||{};return[{site:'KIMOJO Physio',d:tt.physio||[]},{site:'KIMOJO Ergo',d:tt.ergo||[]},{site:'PF im Park',d:tt.phfip||[]}].filter(q=>sitesAktiv().includes(q.site));}
+function anfrTage(){const h0s=ymdP(heute());return[...new Set(anfrQuellen().flatMap(q=>q.d.filter(x=>x.ds<=h0s&&(x.vereinbart!=null||x.neu!=null)).map(x=>x.ds)))].sort();}
+function anfrSchritt(dir){const t=anfrTage();if(!t.length)return;let i=t.indexOf(anfrTag||t[t.length-1]);if(i<0)i=t.length-1;i=Math.max(0,Math.min(t.length-1,i+dir));anfrTag=i===t.length-1?null:t[i];const el=document.getElementById('secAnfr');if(el)el.outerHTML=secAnfragen();}
 function secAnfragen(){
-  const tt=D.trackerTage||{};
-  const quellen=[{site:'KIMOJO Physio',d:tt.physio||[]},{site:'KIMOJO Ergo',d:tt.ergo||[]},{site:'PF im Park',d:tt.phfip||[]}].filter(q=>sitesAktiv().includes(q.site));
+  const quellen=anfrQuellen();
   const months=getActiveMonths(),zr=new Set(tageImZeitraum(months));
-  const h0=heute(),h0s=ymdP(h0),wMo=ymdP(montag(h0)),vMo=ymdP(plusTage(montag(h0),-7)),vSo=ymdP(plusTage(montag(h0),-1));
-  let h=`<section class="sec"><div class="sec-h"><h2>Terminanfragen</h2><span class="sub">Termine vereinbart · davon Neuanfragen</span></div>`;
+  const h0=heute(),h0s=ymdP(h0);
+  let h=`<section class="sec" id="secAnfr"><div class="sec-h"><h2>Terminanfragen</h2><span class="sub">Termine vereinbart · davon Neuanfragen</span></div>`;
   if(!quellen.some(q=>q.d.length))return h+'<div class="empty">Keine Tracker-Einträge für die aktuelle Auswahl.</div></section>';
+  const tage=anfrTage(),sel=anfrTag&&tage.includes(anfrTag)?anfrTag:tage[tage.length-1];
+  const iSel=tage.indexOf(sel),selD=sel?ausYmd(sel):h0;
+  // Woche des gewählten Tages (Mo bis So, höchstens bis heute) und die Woche davor
+  const wMo=ymdP(montag(selD)),wSo=ymdP(plusTage(montag(selD),6)),vMo=ymdP(plusTage(montag(selD),-7)),vSo=ymdP(plusTage(montag(selD),-1));
+  const aktWoche=wMo===ymdP(montag(h0));
   const sum=(arr,f)=>arr.reduce((s,x)=>s+(x[f]||0),0);
-  const tot={tag:0,neuTag:0,wo:0,neuWo:0,vw:0,neuVw:0,zr:0,neuZr:0,wochen:new Set()};
+  const istWerktag=ds=>{const d=ausYmd(ds).getDay();return d>=1&&d<=5;};
+  const tot={tag:0,neuTag:0,wo:0,neuWo:0,vw:0,neuVw:0,zr:0,neuZr:0,oWo:0,hatO:false,tageZr:0};
   let rowsH='';
   quellen.forEach(q=>{
-    const letzte=q.d.filter(x=>x.ds<=h0s).slice(-1)[0];
-    const wo=q.d.filter(x=>x.ds>=wMo&&x.ds<=h0s),vw=q.d.filter(x=>x.ds>=vMo&&x.ds<=vSo),inZr=q.d.filter(x=>x.ds>=h0s?false:zr.has(x.ds));
-    const wochen=new Set(inZr.map(x=>tvWoche(ausYmd(x.ds))));
-    const oWo=wochen.size?sum(inZr,'vereinbart')/wochen.size:null;
-    tot.tag+=letzte?letzte.vereinbart||0:0;tot.neuTag+=letzte?letzte.neu||0:0;tot.wo+=sum(wo,'vereinbart');tot.neuWo+=sum(wo,'neu');tot.vw+=sum(vw,'vereinbart');tot.neuVw+=sum(vw,'neu');tot.zr+=sum(inZr,'vereinbart');tot.neuZr+=sum(inZr,'neu');wochen.forEach(w=>tot.wochen.add(w));
-    rowsH+=`<tr><td>${siteTag(q.site)}</td><td class="r">${letzte?esc(fDat(ausYmd(letzte.ds))):'—'}</td><td class="r"><b>${letzte?n0(letzte.vereinbart):'—'}</b></td><td class="r">${letzte&&letzte.neu!=null?n0(letzte.neu):'—'}</td><td class="r"><b>${n0(sum(wo,'vereinbart'))}</b> <span class="c-m">(${n0(sum(wo,'neu'))})</span></td><td class="r">${n0(sum(vw,'vereinbart'))} <span class="c-m">(${n0(sum(vw,'neu'))})</span></td><td class="r"><b>${oWo==null?'—':n1(oWo)}</b></td><td class="r">${n0(sum(inZr,'neu'))}</td></tr>`;
+    const t=q.d.find(x=>x.ds===sel);
+    const wo=q.d.filter(x=>x.ds>=wMo&&x.ds<=wSo&&x.ds<=h0s),vw=q.d.filter(x=>x.ds>=vMo&&x.ds<=vSo);
+    const inZr=q.d.filter(x=>x.ds<=h0s&&zr.has(x.ds)&&x.vereinbart!=null);
+    // ø je Woche = Termine je erfasstem Werktag × 5. Angebrochene Wochen am
+    // Monatsrand und Feiertage drücken den Wert so nicht.
+    const wt=new Set(inZr.filter(x=>istWerktag(x.ds)).map(x=>x.ds)).size;
+    const oWo=wt?sum(inZr,'vereinbart')/wt*5:null;
+    tot.tag+=t?t.vereinbart||0:0;tot.neuTag+=t?t.neu||0:0;tot.wo+=sum(wo,'vereinbart');tot.neuWo+=sum(wo,'neu');tot.vw+=sum(vw,'vereinbart');tot.neuVw+=sum(vw,'neu');tot.zr+=sum(inZr,'vereinbart');tot.neuZr+=sum(inZr,'neu');if(oWo!=null){tot.oWo+=oWo;tot.hatO=true;}tot.tageZr=Math.max(tot.tageZr,wt);
+    rowsH+=`<tr><td>${siteTag(q.site)}</td><td class="r"><b>${t&&t.vereinbart!=null?n0(t.vereinbart):'—'}</b></td><td class="r">${t&&t.neu!=null?n0(t.neu):'—'}</td><td class="r"><b>${n0(sum(wo,'vereinbart'))}</b> <span class="c-m">(${n0(sum(wo,'neu'))})</span></td><td class="r">${n0(sum(vw,'vereinbart'))} <span class="c-m">(${n0(sum(vw,'neu'))})</span></td><td class="r"><b>${oWo==null?'—':n1(oWo)}</b></td><td class="r">${n0(sum(inZr,'neu'))}</td></tr>`;
   });
-  const oTot=tot.wochen.size?tot.zr/tot.wochen.size:null;
+  const pfeil=(dir,ok)=>`<button class="btn" style="padding:2px 9px;font-size:15px;line-height:1.2${ok?'':';opacity:.35;cursor:default'}" ${ok?`onclick="anfrSchritt(${dir})"`:'disabled'} aria-label="${dir<0?'Vortag':'Nächster Tag'}">${dir<0?'‹':'›'}</button>`;
+  const tagLabel=sel?fDat(selD):'—';
+  const kw=sel?tvWoche(selD):null;
   h+=`<div class="grid">`+
-    `<div class="kpi"><div class="l">Letzter Tag</div><div class="v">${n0(tot.tag)}</div><div class="s">davon <b>${n0(tot.neuTag)}</b> Neuanfragen</div></div>`+
-    `<div class="kpi"><div class="l">Diese Woche</div><div class="v">${n0(tot.wo)}</div><div class="s">Vorwoche <b>${n0(tot.vw)}</b> · neu <b>${n0(tot.neuWo)}</b></div></div>`+
-    `<div class="kpi"><div class="l">ø je Woche</div><div class="v">${oTot==null?'—':n1(oTot)}</div><div class="s">${esc(zeitraumLabel())} · ${tot.wochen.size} Wochen</div></div>`+
+    `<div class="kpi"><div class="l" style="display:flex;align-items:center;justify-content:space-between;gap:6px"><span>${sel===tage[tage.length-1]?'Letzter Tag':'Tag'}</span><span style="display:flex;align-items:center;gap:6px">${pfeil(-1,iSel>0)}<span style="text-transform:none;letter-spacing:0;color:var(--dark)">${esc(tagLabel)}</span>${pfeil(1,iSel<tage.length-1)}</span></div><div class="v">${n0(tot.tag)}</div><div class="s">davon <b>${n0(tot.neuTag)}</b> Neuanfragen</div></div>`+
+    `<div class="kpi"><div class="l">${aktWoche?'Diese Woche':'Woche (KW '+kw+')'}</div><div class="v">${n0(tot.wo)}</div><div class="s">Vorwoche <b>${n0(tot.vw)}</b> · neu <b>${n0(tot.neuWo)}</b>${aktWoche?' · bis heute':''}</div></div>`+
+    `<div class="kpi"><div class="l">ø je Woche</div><div class="v">${tot.hatO?n1(tot.oWo):'—'}</div><div class="s">${esc(zeitraumLabel())} · ${tot.tageZr} erfasste Werktage × 5</div></div>`+
     `<div class="kpi"><div class="l">Neuanfragen</div><div class="v">${n0(tot.neuZr)}</div><div class="s">${esc(zeitraumLabel())} · von ${n0(tot.zr)} Terminen</div></div>`+
     `</div>`;
-  h+=`<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Standort</th><th class="r">Letzter Tag</th><th class="r">Termine</th><th class="r">davon neu</th><th class="r">Diese Woche (neu)</th><th class="r">Vorwoche (neu)</th><th class="r">ø je Woche</th><th class="r">Neuanfragen Zeitraum</th></tr></thead><tbody>${rowsH}</tbody></table></div>`;
-  const letzter=quellen.map(q=>q.d.filter(x=>x.ds<=h0s).slice(-1)[0]).filter(Boolean).map(x=>x.ds).sort().pop();
+  h+=`<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Standort</th><th class="r">${esc(tagLabel)}</th><th class="r">davon neu</th><th class="r">${aktWoche?'Diese Woche':'KW '+kw} (neu)</th><th class="r">Vorwoche (neu)</th><th class="r">ø je Woche</th><th class="r">Neuanfragen Zeitraum</th></tr></thead><tbody>${rowsH}</tbody></table></div>`;
+  const letzter=tage[tage.length-1];
   if(letzter&&letzter<ymdP(plusTage(h0,-14)))h+=`<p class="hint c-r">Der Tracker ist seit dem ${esc(fDat(ausYmd(letzter)))} nicht mehr gepflegt – die Werte oben sind entsprechend alt.</p>`;
-  h+=`<p class="hint">Quelle: Weekly KPI Tracker, Spalten „Termine vereinbart“ und „davon Neuaufnahmen/Neuanfragen“ je Tag. Tage ohne Eintrag fehlen und zählen nicht als null.</p>`;
+  h+=`<p class="hint">Quelle: Weekly KPI Tracker, Spalten „Termine vereinbart“ und „davon Neuaufnahmen/Neuanfragen“ je Tag. Mit den Pfeilen wechselst du den Tag; die Woche folgt dem gewählten Tag. ø je Woche = Termine im Zeitraum ÷ Werktage mit Eintrag × 5, so zählen angebrochene Wochen am Monatsrand nicht als volle Woche. Tage ohne Eintrag fehlen und zählen nicht als null.</p>`;
   return h+'</section>';
 }
 
@@ -318,12 +332,12 @@ function abgDaten(){
   const months=getActiveMonths(),monthNums=months.map(m=>MN.indexOf(m)+1),jahr=new Date().getFullYear();
   const M={},P={},RE={};
   const mk=(o,k,init)=>o[k]||(o[k]=init());
-  const mAgg=(s,m)=>({standort:s,month:m,quelle:null,beh:0,brutto:0,gkv:0,bg:0,privat:0,privatN:0,ausfall:0,zuz:0,zuzEst:0,netto:0,offen:0,offenN:0,kalender:0});
+  const mAgg=(s,m)=>({standort:s,month:m,quelle:null,beh:0,bruttoBeh:0,brutto:0,gkv:0,bg:0,privat:0,privatN:0,ausfall:0,zuz:0,zuzEst:0,netto:0,offen:0,offenN:0,kalender:0});
   const pAgg=(s,n)=>({standort:s,name:n,quelle:null,beh:0,brutto:0,zuz:0,zuzEst:false,netto:0,offen:0});
   // thevea-Statistik
   ((D.abg&&D.abg.rows)||[]).forEach(r=>{
     if(r.jahr!==jahr||!monthNums.includes(r.month)||!matchS(r.standort))return;
-    const m=mk(M,r.standort+'|'+r.month,()=>mAgg(r.standort,r.month));m.quelle='thevea';m.beh+=r.beh;m.brutto+=r.brutto;m.gkv+=r.brutto;m.zuz+=r.zuzahlung;m.netto+=r.netto;
+    const m=mk(M,r.standort+'|'+r.month,()=>mAgg(r.standort,r.month));m.quelle='thevea';m.beh+=r.beh;m.bruttoBeh+=r.brutto;m.brutto+=r.brutto;m.gkv+=r.brutto;m.zuz+=r.zuzahlung;m.netto+=r.netto;
     const p=mk(P,r.standort+'|'+r.name,()=>pAgg(r.standort,r.name));p.quelle='thevea';p.beh+=r.beh;p.brutto+=r.brutto;p.zuz+=r.zuzahlung;p.netto+=r.netto;
   });
   // thevea-Rechnungen: Privatanteil, Ausfallrechnungen, Zahlungseingang
@@ -334,25 +348,37 @@ function abgDaten(){
     if(r.art==='privat'||r.art==='selbstzahler'){const p=Math.min(r.brutto,Math.max(0,m.gkv));m.privat+=r.brutto;m.privatN++;m.gkv-=p;}
     else if(r.art==='ausfall')m.ausfall+=r.brutto;
   });
-  // Medifox (Kitzingen, KIMOJO vor dem Cutover)
+  // Medifox (Kitzingen, KIMOJO vor dem Cutover): Rechnungsübersicht nach
+  // Belegdatum. Kasse = GKV-Anteil der Kasse, Zuzahlung = Patientenanteil,
+  // beide zusammen sind der GKV-Brutto; Privat/Selbstzahler/Barverkauf = privat.
+  // Storno- und Korrekturbelege gehen mit ihrem (negativen) Betrag ein,
+  // Mahnungen nicht.
+  const mrSite=pre=>pre==='PHFIP'?'PF im Park':'KIMOJO (Medifox)';
+  const mrPasst=pre=>pre==='PHFIP'?matchS('PF im Park'):(matchS('KIMOJO Physio')||matchS('KIMOJO Ergo'));
+  const MR_ART={Kasse:'gkv',BG:'bg',Privat:'privat',Selbstzahler:'privat',Barverkauf:'privat',Rechnungskorrektur:'privat',Zuzahlung:'zuz',Ausfall:'ausfall'};
+  ((D.rechnungen&&D.rechnungen.alle)||[]).forEach(r=>{
+    if(r.jahr!==jahr||!monthNums.includes(r.month)||!mrPasst(r.prefix)||/mahnung/i.test(r.belegtyp)||/mahnung/i.test(r.typ))return;
+    const art=MR_ART[r.typ];if(!art)return;
+    const s=mrSite(r.prefix),m=mk(M,s+'|'+r.month,()=>mAgg(s,r.month));m.quelle=m.quelle&&m.quelle!=='medifox'?m.quelle:'medifox';
+    if(art==='ausfall'){m.ausfall+=r.brutto;return;}
+    m.brutto+=r.brutto;m.nRe=(m.nRe||0)+1;
+    if(art==='zuz')m.zuz+=r.brutto;else m[art]+=r.brutto;
+    if(art==='privat')m.privatN++;
+  });
+  // Erbracht und noch nicht abgerechnet je Leistungsmonat aus den Medifox-Zeilen
   const theraNames=new Set(D.ctrl.filter(t=>matchS(t.s)).map(t=>t.n));
-  const vos={};
+  const h0=ymdP(heute());const pad=k=>{const q=String(k).split('-');return q.length===3?q[0]+'-'+q[1].padStart(2,'0')+'-'+q[2].padStart(2,'0'):'';};
   D.raw.forEach(r=>{
     if(r.src==='thevea'||!r.month||!monthNums.includes(r.month)||!tvRowPasst(r,theraNames)||tvIstKurs(r))return;
-    const s=rowSite(r),art=abgMedifoxArt(r);
-    const m=mk(M,s+'|'+r.month,()=>mAgg(s,r.month));m.quelle=m.quelle||'medifox';
-    const p=mk(P,s+'|'+r.name,()=>pAgg(s,r.name));p.quelle=p.quelle||'medifox';
-    if(!r.billed){if(art!=='ausfall'){m.offen+=r.price;m.offenN++;p.offen+=r.price;}return;}
-    if(art==='ausfall'){m.ausfall+=r.price;return;}
-    m.beh++;m.brutto+=r.price;m[art]+=r.price;if(art==='privat')m.privatN++;
-    p.beh++;p.brutto+=r.price;p.quelle='medifox';
-    if(art==='gkv'){const z=r.price*0.1;m.zuz+=z;m.zuzEst+=z;p.zuz+=z;p.zuzEst=true;const vk=s+'|'+r.month+'|'+r.name+'|'+(r.patient||'')+'|'+(r.vo||'');if(!vos[vk]){vos[vk]=1;m.zuz+=10;m.zuzEst+=10;p.zuz+=10;}}
+    if(abgMedifoxArt(r)==='ausfall'||!r.dateKey||pad(r.dateKey)>h0)return;
+    const s=rowSite(r)==='PF im Park'?'PF im Park':'KIMOJO (Medifox)';
+    const m=mk(M,s+'|'+r.month,()=>mAgg(s,r.month));if(!m.quelle)m.quelle='medifox';
+    m.erbMedifox=(m.erbMedifox||0)+r.price;if(!r.billed){m.offen+=r.price;m.offenN++;}
   });
-  Object.values(M).forEach(m=>{if(m.quelle==='medifox'){m.netto=m.brutto-m.zuz;}});
-  Object.values(P).forEach(p=>{if(p.quelle==='medifox')p.netto=p.brutto-p.zuz;});
+  Object.values(M).forEach(m=>{if(m.quelle==='medifox')m.netto=m.brutto-m.zuz;});
   // Kalenderwert (Seite Erbracht) für thevea-Monate als Bezugsgröße
   erbrachtZeilen().forEach(r=>{const m=M[r.standort+'|'+r.month];if(m&&m.quelle==='thevea')m.kalender+=r.price;});
-  Object.values(M).forEach(m=>{if(m.quelle==='thevea'){m.offen=Math.max(0,m.kalender-m.brutto);}else{m.kalender=m.brutto+m.offen;}});
+  Object.values(M).forEach(m=>{if(m.quelle==='thevea'){m.offen=Math.max(0,m.kalender-m.brutto);}else{m.kalender=m.erbMedifox||0;}});
   return{months,monthNums,M:Object.values(M),P:Object.values(P),RE:Object.values(RE)};
 }
 function pAbgerechnet(){
@@ -361,27 +387,27 @@ function pAbgerechnet(){
   if(!M.length)return`<section class="sec"><div class="sec-h"><h2>Abgerechnete Leistungen</h2><span class="sub">${sub}</span></div><div class="empty">Keine abgerechneten Leistungen im gewählten Zeitraum.</div></section>`;
   const S=(arr,k)=>arr.reduce((t,x)=>t+(x[k]||0),0);
   const oe=x=>n1(x)+' €';
-  const tot={beh:S(M,'beh'),brutto:S(M,'brutto'),gkv:S(M,'gkv'),bg:S(M,'bg'),privat:S(M,'privat'),privatN:S(M,'privatN'),ausfall:S(M,'ausfall'),zuz:S(M,'zuz'),zuzEst:S(M,'zuzEst'),netto:S(M,'netto'),offen:S(M,'offen'),kalender:S(M,'kalender')};
+  const tot={beh:S(M,'beh'),bruttoBeh:S(M,'bruttoBeh'),brutto:S(M,'brutto'),gkv:S(M,'gkv'),bg:S(M,'bg'),privat:S(M,'privat'),privatN:S(M,'privatN'),ausfall:S(M,'ausfall'),zuz:S(M,'zuz'),zuzEst:S(M,'zuzEst'),netto:S(M,'netto'),offen:S(M,'offen'),kalender:S(M,'kalender')};
   let standTxt='';{const st=(D.abg&&D.abg.stand)||{};const bis=Object.keys(st).filter(k=>matchS(k.split('|')[0])).map(k=>st[k].bis).filter(Boolean).sort().pop();if(bis)standTxt=' · thevea abgerechnet bis '+ausYmd(bis).toLocaleDateString('de-DE');}
   let h=`<section class="sec"><div class="sec-h"><h2>Abgerechnete Leistungen</h2><span class="sub">${sub}${standTxt}</span></div><div class="grid">`;
-  h+=`<div class="kpi big"><div class="l">Abgerechnet brutto</div><div class="v">${eur0(tot.brutto)}</div><div class="s">${n0(tot.beh)} Behandlungen · ø <b>${oe(tot.beh?tot.brutto/tot.beh:0)}</b> je Behandlung</div></div>`;
+  h+=`<div class="kpi big"><div class="l">Abgerechnet brutto</div><div class="v">${eur0(tot.brutto)}</div><div class="s">${tot.beh?`${n0(tot.beh)} Behandlungen (thevea) · ø <b>${oe(tot.bruttoBeh/tot.beh)}</b> je Behandlung`:`${n0(S(M,'nRe'))} Rechnungen`}</div></div>`;
   h+=`<div class="kpi"><div class="l">Privatleistungen</div><div class="v">${eur0(tot.privat)}</div><div class="s">${n1(tot.brutto?tot.privat/tot.brutto*100:0)} % des Brutto · GKV/BG <b>${eur0(tot.gkv+tot.bg)}</b></div></div>`;
-  h+=`<div class="kpi"><div class="l">Zuzahlungen</div><div class="v">${eur0(tot.zuz)}</div><div class="s">Netto nach Zuzahlung <b>${eur0(tot.netto)}</b>${tot.zuzEst?` · davon ${eur0(tot.zuzEst)} rechnerisch (Medifox)`:''}</div></div>`;
+  h+=`<div class="kpi"><div class="l">Zuzahlungen</div><div class="v">${eur0(tot.zuz)}</div><div class="s">Netto nach Zuzahlung <b>${eur0(tot.netto)}</b> · ${n1(tot.brutto?tot.zuz/tot.brutto*100:0)} % des Brutto</div></div>`;
   const quote=tot.kalender>0?tot.brutto/tot.kalender*100:null;
   h+=`<div class="kpi"><div class="l">Noch nicht abgerechnet</div><div class="v ${tot.offen>0?'c-a':'c-g'}">${eur0(tot.offen)}</div><div class="s">abgerechnet <b>${quote==null?'—':n0(quote)+' %'}</b> von ${eur0(tot.kalender)} erbracht</div></div>`;
   h+='</div>';
   // Nach Standort
-  const bySite={};M.forEach(m=>{const a=bySite[m.standort]||(bySite[m.standort]={standort:m.standort,beh:0,brutto:0,gkv:0,bg:0,privat:0,zuz:0,zuzEst:0,netto:0,ausfall:0,offen:0,kalender:0,quellen:new Set()});['beh','brutto','gkv','bg','privat','zuz','zuzEst','netto','ausfall','offen','kalender'].forEach(k=>a[k]+=m[k]);a.quellen.add(m.quelle);});
+  const bySite={};M.forEach(m=>{const a=bySite[m.standort]||(bySite[m.standort]={standort:m.standort,beh:0,bruttoBeh:0,brutto:0,gkv:0,bg:0,privat:0,zuz:0,zuzEst:0,netto:0,ausfall:0,offen:0,kalender:0,quellen:new Set()});['beh','bruttoBeh','brutto','gkv','bg','privat','zuz','zuzEst','netto','ausfall','offen','kalender'].forEach(k=>a[k]+=m[k]);a.quellen.add(m.quelle);});
   const sites=Object.values(bySite);
-  const qTag=q=>q.has('thevea')&&q.has('medifox')?'thevea + Medifox':q.has('thevea')?'thevea':'Medifox';
-  if(sites.length>1)h+='<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Standort</th><th>Quelle</th><th class="r">Beh.</th><th class="r">Brutto</th><th class="r">GKV / BG</th><th class="r">Privat</th><th class="r">Zuzahlung</th><th class="r">Netto</th><th class="r">Ausfall</th><th class="r">Offen</th></tr></thead><tbody>'+sites.map(a=>`<tr><td>${siteTag(a.standort)}</td><td class="c-m">${qTag(a.quellen)}</td><td class="r">${n0(a.beh)}</td><td class="r"><b>${eur0(a.brutto)}</b></td><td class="r">${eur0(a.gkv+a.bg)}</td><td class="r">${eur0(a.privat)}</td><td class="r">${eur0(a.zuz)}${a.zuzEst?'*':''}</td><td class="r">${eur0(a.netto)}</td><td class="r c-m">${eur0(a.ausfall)}</td><td class="r c-a">${eur0(a.offen)}</td></tr>`).join('')+'</tbody></table></div>';
-  h+=`<p class="hint">KIMOJO aus der thevea-Statistik „Umsatz abgerechnete Verordnungen“ nach Abrechnungsdatum (inklusive Privat- und Beihilferezepte, Zuzahlung laut thevea); der Privatanteil kommt aus den Privat- und Selbstzahlerrechnungen desselben Monats. Kitzingen und KIMOJO bis zum Cutover aus Medifox: Leistungen mit Kennzeichen „Abgerechnet“ nach Leistungsmonat, GKV/BG/Privat an der Positionsnummer; * Zuzahlung rechnerisch 10 % + 10 € je Rezept ohne Befreiungen, weil Medifox sie nicht exportiert. Ausfallrechnungen stehen neben dem Brutto, Club, T-RENA und Kurse sind ausgeklammert.</p></section>`;
+  const qTag=q=>q.has('thevea')&&q.has('medifox')?'thevea + Medifox-Rechnungen':q.has('thevea')?'thevea':'Medifox-Rechnungen';
+  if(sites.length>1)h+='<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Standort</th><th>Quelle</th><th class="r">Beh.</th><th class="r">Brutto</th><th class="r">GKV / BG</th><th class="r">Privat</th><th class="r">Zuzahlung</th><th class="r">Netto</th><th class="r">Ausfall</th><th class="r">Offen</th></tr></thead><tbody>'+sites.map(a=>`<tr><td>${siteTag(a.standort)}</td><td class="c-m">${qTag(a.quellen)}</td><td class="r">${a.beh?n0(a.beh):'—'}</td><td class="r"><b>${eur0(a.brutto)}</b></td><td class="r">${eur0(a.gkv+a.bg)}</td><td class="r">${eur0(a.privat)}</td><td class="r">${eur0(a.zuz)}${a.zuzEst?'*':''}</td><td class="r">${eur0(a.netto)}</td><td class="r c-m">${eur0(a.ausfall)}</td><td class="r c-a">${eur0(a.offen)}</td></tr>`).join('')+'</tbody></table></div>';
+  h+=`<p class="hint">KIMOJO ab dem Cutover aus der thevea-Statistik „Umsatz abgerechnete Verordnungen“ nach Abrechnungsdatum (inklusive Privat- und Beihilferezepte, Zuzahlung laut thevea); der Privatanteil kommt aus den Privat- und Selbstzahlerrechnungen desselben Monats. PF im Park und KIMOJO vor dem Cutover aus der Medifox-Rechnungsübersicht nach Belegdatum: Kasse + BG = GKV/BG, Privat/Selbstzahler/Barverkauf = Privat, Zuzahlungsrechnungen = Zuzahlung; Storno- und Korrekturbelege mindern den Monat, in dem sie gebucht sind, Mahnungen zählen nicht. „KIMOJO (Medifox)“ ist Physio und Ergo zusammen, weil die Rechnungen keinen Bereich tragen. Ausfallrechnungen stehen neben dem Brutto.${D.rechnungen&&D.rechnungen.bis?` <b>Medifox-Rechnungen liegen bis ${ausYmd(D.rechnungen.bis).toLocaleDateString('de-DE')} vor</b> – neuere Monate brauchen einen Export (Abrechnung → Rechnungsübersicht → Monat und IK → Export) im Ordner Controlling/Medifox Rechnungen.`:''}</p></section>`;
   // Nach Monat
-  const byM={};M.forEach(m=>{const a=byM[m.month]||(byM[m.month]={beh:0,brutto:0,gkv:0,bg:0,privat:0,zuz:0,zuzEst:0,netto:0,ausfall:0,offen:0,kalender:0});['beh','brutto','gkv','bg','privat','zuz','zuzEst','netto','ausfall','offen','kalender'].forEach(k=>a[k]+=m[k]);});
-  const zeile=(label,a,sum)=>{const q=a.kalender>0?a.brutto/a.kalender*100:null;return`<tr${sum?' class="sum"':''}><td>${esc(label)}</td><td class="r">${n0(a.beh)}</td><td class="r"><b>${eur0(a.brutto)}</b></td><td class="r">${eur0(a.gkv+a.bg)}</td><td class="r">${eur0(a.privat)}</td><td class="r">${eur0(a.zuz)}${a.zuzEst?'*':''}</td><td class="r">${eur0(a.netto)}</td><td class="r c-m">${eur0(a.ausfall)}</td><td class="r">${eur0(a.offen)}</td><td class="r">${q==null?'—':`<span class="pill ${q>=95?'p-g':q>=80?'p-a':'p-r'}">${n0(q)} %</span>`}</td></tr>`;};
-  h+=`<section class="sec"><div class="sec-h"><h2>Nach Monat</h2><span class="sub">thevea nach Abrechnungsdatum · Medifox nach Leistungsmonat</span></div><div class="tbl-wrap"><table><thead><tr><th>Monat</th><th class="r">Beh.</th><th class="r">Brutto</th><th class="r">GKV / BG</th><th class="r">Privat</th><th class="r">Zuzahlung</th><th class="r">Netto</th><th class="r">Ausfall</th><th class="r">Offen</th><th class="r">Quote</th></tr></thead><tbody>`;
+  const byM={};M.forEach(m=>{const a=byM[m.month]||(byM[m.month]={beh:0,bruttoBeh:0,brutto:0,gkv:0,bg:0,privat:0,zuz:0,zuzEst:0,netto:0,ausfall:0,offen:0,kalender:0});['beh','bruttoBeh','brutto','gkv','bg','privat','zuz','zuzEst','netto','ausfall','offen','kalender'].forEach(k=>a[k]+=m[k]);});
+  const zeile=(label,a,sum)=>{const q=a.kalender>0?a.brutto/a.kalender*100:null;return`<tr${sum?' class="sum"':''}><td>${esc(label)}</td><td class="r">${a.beh?n0(a.beh):'—'}</td><td class="r"><b>${eur0(a.brutto)}</b></td><td class="r">${eur0(a.gkv+a.bg)}</td><td class="r">${eur0(a.privat)}</td><td class="r">${eur0(a.zuz)}${a.zuzEst?'*':''}</td><td class="r">${eur0(a.netto)}</td><td class="r c-m">${eur0(a.ausfall)}</td><td class="r">${eur0(a.offen)}</td><td class="r">${q==null?'—':`<span class="pill ${q>=95?'p-g':q>=80?'p-a':'p-r'}">${n0(q)} %</span>`}</td></tr>`;};
+  h+=`<section class="sec"><div class="sec-h"><h2>Nach Monat</h2><span class="sub">thevea nach Abrechnungsdatum · Medifox nach Belegdatum · Offen nach Leistungsmonat</span></div><div class="tbl-wrap"><table><thead><tr><th>Monat</th><th class="r">Beh.</th><th class="r">Brutto</th><th class="r">GKV / BG</th><th class="r">Privat</th><th class="r">Zuzahlung</th><th class="r">Netto</th><th class="r">Ausfall</th><th class="r">Offen</th><th class="r">Quote</th></tr></thead><tbody>`;
   monthNums.forEach(mi=>{const a=byM[mi];if(!a)return;h+=zeile(MN[mi-1],a,false);});
-  h+=zeile('Summe',tot,true)+'</tbody></table></div><p class="hint">Offen = erbrachter Kalenderwert, der noch nicht abgerechnet ist (KIMOJO: Kalenderwert der Seite Erbracht minus thevea-Abrechnung; Medifox: Leistungen ohne Kennzeichen „Abgerechnet“). Quote = abgerechnet ÷ erbracht; im laufenden Monat naturgemäß niedriger, weil viele Rezepte noch offen sind.</p></section>';
+  h+=zeile('Summe',tot,true)+'</tbody></table></div><p class="hint">Offen = erbrachter Wert, der noch nicht abgerechnet ist (thevea: Kalenderwert der Seite Erbracht minus Abrechnung; Medifox: Leistungen bis heute ohne Kennzeichen „Abgerechnet“, nach Leistungsmonat). Quote = abgerechnet ÷ erbracht; im laufenden Monat naturgemäß niedriger, weil viele Rezepte noch offen sind.</p></section>';
   // Rechnungen & Zahlungseingang (thevea)
   if(RE.length){
     const ord={privat:1,selbstzahler:2,zuzahlung:3,ausfall:4,sonst:5};RE.sort((a,b)=>(ord[a.art]||9)-(ord[b.art]||9));
@@ -393,7 +419,7 @@ function pAbgerechnet(){
   const tl=P.filter(p=>p.brutto>0||p.offen>0).sort((a,b)=>b.brutto-a.brutto);const mx=Math.max(...tl.map(t=>t.brutto),1);
   h+=`<section class="sec"><div class="sec-h"><h2>Nach Therapeut:in</h2><span class="sub">${tl.length} Personen · sortiert nach Brutto</span></div><div class="tbl-wrap"><table><thead><tr><th>Therapeut:in</th><th>Standort</th><th class="r">Beh.</th><th class="r">Brutto</th><th class="r">Zuzahlung</th><th class="r">Netto</th><th class="r">ø je Beh.</th><th class="r">Offen</th><th style="min-width:110px"></th></tr></thead><tbody>`;
   tl.forEach(t=>{h+=`<tr><td><b>${esc(t.name)}</b></td><td>${siteTag(t.standort)}</td><td class="r">${n0(t.beh)}</td><td class="r"><b>${eur0(t.brutto)}</b></td><td class="r">${eur0(t.zuz)}${t.zuzEst?'*':''}</td><td class="r">${eur0(t.netto)}</td><td class="r">${oe(t.beh?t.brutto/t.beh:0)}</td><td class="r">${t.quelle==='medifox'?eur0(t.offen):'<span class="c-m">—</span>'}</td><td><div class="bar"><i style="width:${t.brutto/mx*100}%;background:${SITE_COL[t.standort]||'var(--blue)'}"></i></div></td></tr>`;});
-  h+='</tbody></table></div><p class="hint">KIMOJO je Person aus der thevea-Statistik (Privatanteil dort nicht je Person ausweisbar); Kitzingen je Person aus den Medifox-Zeilen mit Kennzeichen „Abgerechnet“, Offen = noch nicht abgerechnete Leistungen. Ergo-Nachnamen ergänzt der Weekly Tracker.</p></section>';
+  h+='</tbody></table></div><p class="hint">Je Person nur aus der thevea-Statistik (Privatanteil dort nicht je Person ausweisbar). Die Medifox-Rechnungsübersicht trägt keine Therapeut:in, deshalb fehlen PF im Park und KIMOJO vor dem Cutover hier.</p></section>';
   return h;
 }
 
