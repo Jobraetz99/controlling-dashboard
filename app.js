@@ -89,14 +89,18 @@ function rNav(){
   const el=document.getElementById('nav');if(!el)return;
   el.innerHTML=PAGES.map(p=>`<button class="${p.id===page?'a':''}${p.alt?' alt':''}" onclick="location.hash='${p.id}'">${esc(p.l)}</button>`).join('');
 }
+// Nach oben nur beim Wechsel des Reiters; Filter, Monate und Umschalter auf der
+// Seite zeichnen neu, ohne dass die Ansicht springt.
+let rPageZuletzt=null;
+function rPageScroll(id,y){if(rPageZuletzt!==id){rPageZuletzt=id;window.scrollTo({top:0});}else window.scrollTo({top:y});}
 function rPage(){
   const el=document.getElementById('page');if(!el)return;
-  const p=PAGES.find(x=>x.id===page)||PAGES[0];
+  const p=PAGES.find(x=>x.id===page)||PAGES[0],y=window.scrollY;
   // Praxismanagement hat eigene Filter (Betrieb, Zeitraum); die globale Leiste ausblenden.
   const fl=document.getElementById('filters');if(fl)fl.style.display=p.id==='praxis'?'none':'';
-  if(p.id==='praxis'){el.innerHTML=pPraxis();try{rPraxis();}catch(e){console.warn('Praxis:',e);}try{pmAbgleich();}catch(e){}window.scrollTo({top:0});return;}
+  if(p.id==='praxis'){el.innerHTML=pPraxis();try{rPraxis();}catch(e){console.warn('Praxis:',e);}try{pmAbgleich();}catch(e){}rPageScroll(p.id,y);return;}
   el.innerHTML=p.id==='uebersicht'?pUebersicht():p.id==='erbracht'?pErbracht():p.id==='abgerechnet'?pAbgerechnet():p.id==='vorschau'?pVorschau():p.id==='planist'?pPlanIst():p.id==='auslastung'?pAuslastung():p.id==='termine'?pTermine():p.id==='therapeuten'?pTherapeuten():p.id==='krankenstand'?pKrankenstand():p.id==='bwa'?pBwa():p.id==='cashflow'?pCashflow():p.id==='liquiditaet'?pLiquiditaet():pAlt(p);
-  window.scrollTo({top:0});
+  rPageScroll(p.id,y);
 }
 function pAlt(p){
   return`<div class="sec"><div class="alt-box"><h3>${esc(p.l)}</h3><p>Dieser Bereich wird als Nächstes umgebaut. Bis dahin steht er in der <a href="../">alten Ansicht</a>.</p></div></div>`;
