@@ -599,7 +599,8 @@ function pBwa(){
   const ents=BWA_ENT.filter(e=>e.sites.some(s=>matchS(s)));
   const sub=`${esc(zeitraumLabel())} · ${esc(sn(aS))}`;
   const z=(S,c)=>(S.z[c]&&S.z[c].ist)||0,zp=(S,c)=>(S.z[c]&&S.z[c].pm===S.monate.length&&S.z[c].plan)||0,kp=(S,x)=>(x.pm===S.monate.length&&x.plan)||0;
-  const planInt=(e,key,S)=>{const p=D[e.pl]&&D[e.pl].dashboard;if(!p)return 0;let v=0;S.monate.forEach(m=>{v+=p.therapie[key+'_'+m]||0;});return v;};
+  // Plan = Therapie + Club: die BWA zeigt den ganzen Betrieb
+  const planInt=(e,key,S)=>{const p=D[e.pl]&&D[e.pl].dashboard;if(!p)return 0;let v=0;S.monate.forEach(m=>{v+=((p.therapie||{})[key+'_'+m]||0)+((p.club||{})[key+'_'+m]||0);});return v;};
   const dPill=(ist,plan,inv)=>{if(!plan)return'<span class="pill p-n">kein Plan</span>';const d=(ist-plan)/Math.abs(plan)*100;const gut=inv?d<=0:d>=0;return`<span class="pill ${gut?'p-g':'p-r'}">${d>=0?'+':''}${n1(d)} %</span>`;};
   let h='';
   const data=ents.map(e=>({e,S:bwaSumme(D[e.k]||{},months)}));
@@ -616,7 +617,7 @@ function pBwa(){
   h+=`<div class="kpi"><div class="l">Umsatzrendite</div><div class="v ${marge==null?'':marge>=20?'c-g':marge>=10?'c-a':'c-r'}">${pctS(marge)}</div><div class="s">Ergebnis vor Steuern ÷ Umsatz · Betriebsergebnis ${eur0(tot.betrieb)}</div></div>`;
   h+='</div>';
   if(data.length>1)h+='<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Betrieb</th><th>BWA-Monate</th><th class="r">Umsatz</th><th class="r">Personal</th><th class="r">Gesamtkosten</th><th class="r">Ergebnis v. St.</th><th class="r">Rendite</th><th class="r">Personalquote</th></tr></thead><tbody>'+data.map(({e,S})=>{const u=z(S,'1006'),k=z(S,'1294'),p=z(S,'1164'),g=z(S,'1374');return`<tr><td><span class="site"><span class="dot" style="background:${e.col}"></span>${esc(e.l)}</span></td><td class="c-m">${S.monate.length?S.monate.join(', '):'—'}</td><td class="r"><b>${eur0(u)}</b></td><td class="r">${eur0(p)}</td><td class="r">${eur0(k)}</td><td class="r ${g>=0?'c-g':'c-r'}"><b>${eur0(g)}</b></td><td class="r">${pctS(u?g/u*100:null)}</td><td class="r">${pctS(u?p/u*100:null)}</td></tr>`;}).join('')+'</tbody></table></div>';
-  h+=`<p class="hint">Quelle: DATEV-BWA (Soll-/Ist-Vergleich) je Monatsblatt, BWA KIMOJO.xlsx und BWA PHFIP.xlsx. Die Kacheln vergleichen mit der internen Planung (Dashboard-Plan wie auf Plan vs. Ist, nur für Monate mit BWA); die Kostenarten unten mit der Plan-Spalte der BWA selbst, sofern jeder BWA-Monat einen Plan trägt.${fehlt.length?` Ohne BWA im Zeitraum: ${esc(fehlt.join(', '))}.`:''}</p></section>`;
+  h+=`<p class="hint">Quelle: DATEV-BWA (Soll-/Ist-Vergleich) je Monatsblatt, BWA KIMOJO.xlsx und BWA PHFIP.xlsx. Die Kacheln vergleichen mit der internen Planung (Dashboard-Plan Therapie + Club wie auf Plan vs. Ist, nur für Monate mit BWA); die Kostenarten unten mit der Plan-Spalte der BWA selbst, sofern jeder BWA-Monat einen Plan trägt.${fehlt.length?` Ohne BWA im Zeitraum: ${esc(fehlt.join(', '))}.`:''}</p></section>`;
   // Je Betrieb: Erfolgsrechnung und Kostenarten mit Konten
   let uid=0;
   data.forEach(({e,S})=>{
@@ -1285,12 +1286,13 @@ function planIstDaten(months){
   const kim=aS==='Alle'||aS==='KIMOJO Gesamt'||aS==='KIMOJO Physio'||aS==='KIMOJO Ergo',pf=aS==='Alle'||aS==='PF im Park';
   const theraNames=new Set(D.ctrl.filter(t=>matchS(t.s)).map(t=>t.n));
   const erbM={};D.raw.forEach(r=>{if(!r.month||!tvRowPasst(r,theraNames))return;erbM[r.month]=(erbM[r.month]||0)+r.price;});
-  const plan=(key,m)=>{let v=0;if(kim&&D.planK.dashboard)v+=D.planK.dashboard.therapie[key+'_'+m]||0;if(pf&&D.planP.dashboard)v+=D.planP.dashboard.therapie[key+'_'+m]||0;return v;};
+  // BWA (ganzer Betrieb) gegen Plan Therapie + Club, Erbracht (nur Behandlungen) gegen Plan Therapie
+  const plan=(key,m,nurTh)=>{let v=0;[[kim,D.planK.dashboard],[pf,D.planP.dashboard]].forEach(([an,d])=>{if(!an||!d)return;v+=((d.therapie||{})[key+'_'+m]||0)+(nurTh?0:((d.club||{})[key+'_'+m]||0));});return v;};
   return months.map(m=>{
     const bK=getBWA(D.bwaK,m),bP=getBWA(D.bwaP,m);let ein=0,kosten=0,gewinn=0,bwa=false;
     if(kim&&bK){ein+=bK.umsatz;kosten+=bK.gesamtkosten;gewinn+=bK.ergebnis;bwa=true;}
     if(pf&&bP){ein+=bP.umsatz;kosten+=bP.gesamtkosten;gewinn+=bP.ergebnis;bwa=true;}
-    return{m,erbracht:erbM[MN.indexOf(m)+1]||0,bwa,ein,kosten,gewinn,pEin:plan('einnahmen',m),pKosten:plan('kosten',m),pGewinn:plan('gewinn',m)};
+    return{m,erbracht:erbM[MN.indexOf(m)+1]||0,bwa,ein,kosten,gewinn,pEin:plan('einnahmen',m),pEinTh:plan('einnahmen',m,true),pKosten:plan('kosten',m),pGewinn:plan('gewinn',m)};
   });
 }
 const dPill=(ist,plan,inv)=>{if(!plan)return'<span class="pill p-n">—</span>';const d=(ist-plan)/Math.abs(plan)*100;const ok=inv?d<=0:d>=0;return`<span class="pill ${ok?'p-g':'p-r'}">${d>=0?'+':''}${n1(d)} %</span>`;};
@@ -1304,27 +1306,27 @@ function pPlanIst(){
   const mitBwa=data.filter(d=>d.bwa);const sumB=k=>mitBwa.reduce((s,d)=>s+d[k],0);
   const ohneBwa=data.filter(d=>!d.bwa).map(d=>d.m);
   let h=`<section class="sec"><div class="sec-h"><h2>Plan vs. Ist</h2><span class="sub">${esc(zeitraumLabel())} · ${esc(sn(aS))}${ohneBwa.length?' · BWA fehlt für '+ohneBwa.join(', '):''}</span></div><div class="grid">`;
-  h+=`<div class="kpi"><div class="l">Einnahmen erbracht</div><div class="v">${fmK(sum('erbracht'))}</div><div class="s">${dPill(sum('erbracht'),sum('pEin'))} · Plan <b>${fmK(sum('pEin'))}</b></div></div>`;
-  h+=`<div class="kpi"><div class="l">Umsatz BWA</div><div class="v">${fmK(sumB('ein'))}</div><div class="s">${dPill(sumB('ein'),sumB('pEin'))} · Plan <b>${fmK(sumB('pEin'))}</b>${ohneBwa.length?' · nur Monate mit BWA':''}</div></div>`;
+  h+=`<div class="kpi"><div class="l">Einnahmen erbracht</div><div class="v">${fmK(sum('erbracht'))}</div><div class="s">${dPill(sum('erbracht'),sum('pEinTh'))} · Plan Therapie <b>${fmK(sum('pEinTh'))}</b></div></div>`;
+  h+=`<div class="kpi"><div class="l">Umsatz BWA</div><div class="v">${fmK(sumB('ein'))}</div><div class="s">${dPill(sumB('ein'),sumB('pEin'))} · Plan Therapie + Club <b>${fmK(sumB('pEin'))}</b>${ohneBwa.length?' · nur Monate mit BWA':''}</div></div>`;
   h+=`<div class="kpi"><div class="l">Kosten BWA</div><div class="v">${fmK(sumB('kosten'))}</div><div class="s">${dPill(sumB('kosten'),sumB('pKosten'),true)} · Plan <b>${fmK(sumB('pKosten'))}</b></div></div>`;
   h+=`<div class="kpi"><div class="l">Gewinn BWA</div><div class="v ${sumB('gewinn')>=0?'c-g':'c-r'}">${fmK(sumB('gewinn'))}</div><div class="s">${dPill(sumB('gewinn'),sumB('pGewinn'))} · Plan <b>${fmK(sumB('pGewinn'))}</b></div></div>`;
   h+='</div></section>';
   // Einnahmen
-  h+=`<section class="sec"><div class="sec-h"><h2>Einnahmen</h2><span class="sub">Erbracht (Kalender) und BWA-Umsatz gegen Plan</span></div>`;
-  h+='<div class="tbl-wrap"><table><thead><tr><th>Monat</th><th class="r">Erbracht</th><th class="r">Δ Plan</th><th style="min-width:120px"></th><th class="r">BWA</th><th class="r">Δ Plan</th><th class="r">Plan</th></tr></thead><tbody>';
-  data.forEach(d=>{h+=`<tr><td>${d.m}</td><td class="r"><b>${eur0(d.erbracht)}</b></td><td class="r">${dPill(d.erbracht,d.pEin)}</td><td>${barCell(d.erbracht,d.pEin,'var(--red)')}</td><td class="r">${d.bwa?eur0(d.ein):'<span class="c-m">—</span>'}</td><td class="r">${d.bwa?dPill(d.ein,d.pEin):'<span class="pill p-n">—</span>'}</td><td class="r c-m">${eur0(d.pEin)}</td></tr>`;});
-  h+=`<tr class="sum"><td>Summe</td><td class="r">${eur0(sum('erbracht'))}</td><td class="r">${dPill(sum('erbracht'),sum('pEin'))}</td><td></td><td class="r">${eur0(sumB('ein'))}</td><td class="r">${dPill(sumB('ein'),sumB('pEin'))}</td><td class="r">${eur0(sum('pEin'))}</td></tr></tbody></table></div>`;
-  if(data.length>1)h+='<div style="margin-top:14px">'+cumChart(data.map(d=>d.m),data.map(d=>d.erbracht),data.map(d=>d.pEin),'Erbracht','Plan')+'</div>';
+  h+=`<section class="sec"><div class="sec-h"><h2>Einnahmen</h2><span class="sub">Erbracht (Kalender) gegen Plan Therapie, BWA-Umsatz gegen Plan Therapie + Club</span></div>`;
+  h+='<div class="tbl-wrap"><table><thead><tr><th>Monat</th><th class="r">Erbracht</th><th class="r">Plan Therapie</th><th class="r">Δ</th><th style="min-width:120px"></th><th class="r">BWA</th><th class="r">Plan gesamt</th><th class="r">Δ</th></tr></thead><tbody>';
+  data.forEach(d=>{h+=`<tr><td>${d.m}</td><td class="r"><b>${eur0(d.erbracht)}</b></td><td class="r c-m">${eur0(d.pEinTh)}</td><td class="r">${dPill(d.erbracht,d.pEinTh)}</td><td>${barCell(d.erbracht,d.pEinTh,'var(--red)')}</td><td class="r">${d.bwa?eur0(d.ein):'<span class="c-m">—</span>'}</td><td class="r c-m">${eur0(d.pEin)}</td><td class="r">${d.bwa?dPill(d.ein,d.pEin):'<span class="pill p-n">—</span>'}</td></tr>`;});
+  h+=`<tr class="sum"><td>Summe</td><td class="r">${eur0(sum('erbracht'))}</td><td class="r">${eur0(sum('pEinTh'))}</td><td class="r">${dPill(sum('erbracht'),sum('pEinTh'))}</td><td></td><td class="r">${eur0(sumB('ein'))}</td><td class="r">${eur0(sumB('pEin'))}</td><td class="r">${dPill(sumB('ein'),sumB('pEin'))}</td></tr></tbody></table></div>`;
+  if(data.length>1)h+='<div style="margin-top:14px">'+cumChart(data.map(d=>d.m),data.map(d=>d.erbracht),data.map(d=>d.pEinTh),'Erbracht','Plan Therapie')+'</div>';
   h+='</section>';
   // Kosten & Gewinn
-  h+=`<section class="sec"><div class="sec-h"><h2>Kosten und Gewinn</h2><span class="sub">BWA gegen Plan</span></div>`;
+  h+=`<section class="sec"><div class="sec-h"><h2>Kosten und Gewinn</h2><span class="sub">BWA gegen Plan Therapie + Club</span></div>`;
   h+='<div class="tbl-wrap"><table><thead><tr><th>Monat</th><th class="r">Kosten BWA</th><th class="r">Plan</th><th class="r">Δ</th><th class="r">Gewinn BWA</th><th class="r">Plan</th><th class="r">Δ</th><th style="min-width:120px"></th></tr></thead><tbody>';
   data.forEach(d=>{
     if(!d.bwa){h+=`<tr><td>${d.m}</td><td colspan="7" class="c-m">BWA liegt noch nicht vor · Plan Kosten ${eur0(d.pKosten)} · Plan Gewinn ${eur0(d.pGewinn)}</td></tr>`;return;}
     h+=`<tr><td>${d.m}</td><td class="r">${eur0(d.kosten)}</td><td class="r c-m">${eur0(d.pKosten)}</td><td class="r">${dPill(d.kosten,d.pKosten,true)}</td><td class="r"><b class="${d.gewinn>=0?'c-g':'c-r'}">${eur0(d.gewinn)}</b></td><td class="r c-m">${eur0(d.pGewinn)}</td><td class="r">${dPill(d.gewinn,d.pGewinn)}</td><td>${barCell(Math.max(d.gewinn,0),Math.max(d.pGewinn,0),d.gewinn>=0?'var(--green)':'var(--red)')}</td></tr>`;});
   h+=`<tr class="sum"><td>Summe</td><td class="r">${eur0(sumB('kosten'))}</td><td class="r">${eur0(sumB('pKosten'))}</td><td class="r">${dPill(sumB('kosten'),sumB('pKosten'),true)}</td><td class="r">${eur0(sumB('gewinn'))}</td><td class="r">${eur0(sumB('pGewinn'))}</td><td class="r">${dPill(sumB('gewinn'),sumB('pGewinn'))}</td><td></td></tr></tbody></table></div>`;
   if(mitBwa.length>1)h+='<div style="margin-top:14px">'+cumChart(mitBwa.map(d=>d.m),mitBwa.map(d=>d.gewinn),mitBwa.map(d=>d.pGewinn),'Gewinn BWA','Plan')+'</div>';
-  h+='<p class="hint">Erbracht ist der Kalenderwert aus thevea und Medifox, BWA der Umsatz laut Steuerberater; die BWA liegt meist ein bis zwei Monate später vor. Kosten: unter Plan ist grün.</p></section>';
+  h+='<p class="hint">Erbracht ist der Kalenderwert aus thevea und Medifox (nur Behandlungen) und steht deshalb gegen den Therapie-Plan. BWA ist der Umsatz laut Steuerberater für den ganzen Betrieb, Club eingeschlossen, und steht gegen den Plan Therapie + Club; sie liegt meist ein bis zwei Monate später vor. Kosten: unter Plan ist grün.</p></section>';
   return h;
 }
 // Kumulierter Verlauf zweier Reihen über beliebig viele Monate.
