@@ -19,6 +19,11 @@ const PAGES=[
   {id:'praxis',l:'Praxismanagement'}
 ];
 aM='AKTUELL';// Standard: laufender Monat eingeschlossen
+// Gewähltes Jahr (Jahresauswahl in der Filterleiste). data.js liest es über cockpitJahr().
+var aJ=new Date().getFullYear();
+const JAHR_START=2026;// erstes Jahr mit Daten im Cockpit
+function setJ(j){if(+j===+aJ)return;aJ=+j;aM='AKTUELL';anfrTag=null;loadAll();}
+const istVorjahr=()=>cockpitJahr()<new Date().getFullYear();
 let page=(location.hash||'#uebersicht').slice(1);
 if(!PAGES.some(p=>p.id===page))page='uebersicht';
 window.addEventListener('hashchange',()=>{page=(location.hash||'#uebersicht').slice(1);if(!PAGES.some(p=>p.id===page))page='uebersicht';rNav();rPage();});
@@ -48,15 +53,15 @@ const fDat=d=>d.toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:
 function sitesAktiv(){if(aS==='Alle')return AUSL_SITES.slice();if(aS==='KIMOJO Gesamt')return['KIMOJO Physio','KIMOJO Ergo'];return[aS];}
 function siteTag(s){return`<span class="site"><span class="dot" style="background:${SITE_COL[s]||'#999'}"></span>${esc(sn(s))}</span>`;}
 function tageImZeitraum(months){
-  const jahr=new Date().getFullYear(),out=[];
+  const jahr=cockpitJahr(),out=[];
   months.forEach(m=>{const mi=MN.indexOf(m);if(mi<0)return;const n=new Date(jahr,mi+1,0).getDate();for(let d=1;d<=n;d++)out.push(ymdP(new Date(jahr,mi,d)));});
   return out;
 }
 function zeitraumLabel(){
   const months=getActiveMonths();
   if(aM==='YTD')return'Jahr bis '+(months.length?months[months.length-1]:'heute');
-  if(aM==='AKTUELL')return'Jan – '+MN[new Date().getMonth()]+' (laufend)';
-  return aM+' '+new Date().getFullYear();
+  if(aM==='AKTUELL')return istVorjahr()?'Jan – Dez '+cockpitJahr():'Jan – '+MN[new Date().getMonth()]+' (laufend)';
+  return aM+' '+cockpitJahr();
 }
 const ampelPill=(v,g,a,inv)=>{if(v==null)return'<span class="pill p-n">—</span>';const ok=inv?v<=g:v>=g,mid=inv?v<=a:v>=a;return`<span class="pill ${ok?'p-g':mid?'p-a':'p-r'}">${n1(v)}${inv===undefined||inv===false?' %':''}</span>`;};
 const planPill=(ist,plan)=>{if(!plan)return'';const d=(ist-plan)/Math.abs(plan)*100;return`<span class="pill ${d>=0?'p-g':'p-r'}">${d>=0?'+':''}${n1(d)} % zum Plan ${fmK(plan)}</span>`;};
@@ -67,7 +72,9 @@ function rFilter(){
   const rawMonths=new Set(D.raw.map(r=>r.month).filter(Boolean).map(m=>MN[m-1]));
   const bwaMonths=new Set([...getBWAMonths(D.bwaK).map(x=>x.month),...getBWAMonths(D.bwaP).map(x=>x.month)]);
   const avail=new Set([...bwaMonths,...rawMonths]);
-  let h='<div class="seg">';
+  let h='';
+  const jNow=new Date().getFullYear();if(jNow>JAHR_START){h+='<div class="seg">';for(let j=JAHR_START;j<=jNow;j++)h+=`<button class="${+aJ===j?'a':''}" onclick="setJ(${j})">${j}</button>`;h+='</div>';}
+  h+='<div class="seg">';
   h+=`<button class="${aM==='YTD'?'a':''}" onclick="setM('YTD')">YTD</button>`;
   h+=`<button class="${aM==='AKTUELL'?'a':''}" onclick="setM('AKTUELL')">Aktuell</button>`;
   MN.forEach(m=>{if(avail.has(m))h+=`<button class="${aM===m?'a':''}" onclick="setM('${m}')">${m}</button>`;});
@@ -111,14 +118,18 @@ function secUmsatz(){
   const std=therapists.reduce((o,t)=>{const rev=agg[t.n]||0;if(rev<=0)return o;const s=tvStdSumme(t,months);o.rev+=rev;o.soll+=s.soll;o.anw+=s.anw;return o;},{rev:0,soll:0,anw:0});
   const ephV=std.soll>0?std.rev/std.soll:0,ephA=std.anw>0?std.rev/std.anw:0;
   const planEin=getPlanForMonths(months,'einnahmen');
+  // Vorjahr im gleichen Zeitraum; im laufenden Monat nur bis zum heutigen Tag.
+  const vj=(()=>{const vjRows=(D.rawVJ||[]).filter(r=>monthNums.includes(r.month)&&tvRowPasst(r,theraNames));if(!vjRows.length)return null;const h0=new Date();const lfdM=!istVorjahr()?h0.getMonth()+1:0;let sum=0;vjRows.forEach(r=>{if(r.month===lfdM){let tag=null;if(r.datum)tag=new Date(r.datum).getDate();else if(r.dateKey)tag=+String(r.dateKey).split('-')[2];if(tag&&tag>h0.getDate())return;}sum+=r.price;});return sum>0?sum:null;})();
+  const vjPill=vj?`<div class="s">Vorjahr ${cockpitJahr()-1}: <b>${eur0(vj)}</b> <span class="pill ${bis>=vj?'p-g':'p-r'}">${bis>=vj?'+':''}${n0((bis-vj)/vj*100)} %</span>${!istVorjahr()?' (bis heute)':''}</div>`:'';
   const amp=v=>v>=65?'c-g':v>=56?'c-a':'c-r';
   let h=`<section class="sec"><div class="sec-h"><h2>Umsatz erbracht</h2><span class="sub">${esc(zeitraumLabel())} · ${esc(sn(aS))}</span></div><div class="grid">`;
-  h+=`<div class="kpi big"><div class="l">Umsatz erbracht</div><div class="v">${eur0(ges)}</div><div class="s">davon <b>${eur0(bis)}</b> bereits erbracht · <b>${eur0(zuk)}</b> geplant bis Monatsende</div>${planEin?`<div class="s">${planPill(ges,planEin)}</div>`:''}</div>`;
+  h+=`<div class="kpi big"><div class="l">Umsatz erbracht</div><div class="v">${eur0(ges)}</div><div class="s">davon <b>${eur0(bis)}</b> bereits erbracht · <b>${eur0(zuk)}</b> geplant bis Monatsende</div>${vjPill}${planEin?`<div class="s">${planPill(ges,planEin)}</div>`:''}</div>`;
   const sites=sitesAktiv().filter(s=>bySite[s]);
   if(sites.length>1)h+=`<div class="kpi"><div class="l">Nach Standort</div>${sites.map(s=>`<div class="s" style="display:flex;justify-content:space-between;gap:8px;margin-top:6px">${siteTag(s)}<b>${eur0(bySite[s])}</b></div>`).join('')}</div>`;
   h+=`<div class="kpi"><div class="l">€ je Vertragsstunde</div><div class="v ${amp(ephV)}">${n1(ephV)} €</div><div class="s">Umsatz ÷ Soll-Stunden (${n0(std.soll)} h) · Ziel ≥ 65</div></div>`;
   h+=`<div class="kpi"><div class="l">€ je anwesender Stunde</div><div class="v ${amp(ephA)}">${n1(ephA)} €</div><div class="s">ohne Urlaub, Krankheit, Fortbildung (${n0(std.anw)} h)</div></div>`;
   h+='</div>';
+  if(D.dateienJahr&&D.dateienJahr.fehlt.length){const nm={kpi:'Weekly KPI Tracker KIMOJO',kpiPhfip:'Weekly KPI Tracker PF im Park',planK:'Planung KIMOJO',planP:'Planung PF im Park'};h+=`<p class="hint c-a">Für ${cockpitJahr()} fehlt: ${esc(D.dateienJahr.fehlt.map(k=>nm[k]||k).join(', '))}. Das Cockpit sucht im Ordner der 2026er-Datei nach demselben Namen mit „${cockpitJahr()}“; liegt die Datei anders, muss sie einmal eingetragen werden.</p>`;}
   if(D.thevea&&D.thevea.bis)h+=`<p class="hint">Stattgefunden bis ${D.thevea.bis.toLocaleDateString('de-DE')} · Kitzingen aus Medifox ohne Club, T-RENA und Präventionskurse.</p>`;
   return h+'</section>';
 }
@@ -177,7 +188,7 @@ function secAnfragen(){
 // 3 · Club-Abschlüsse aus den MyWellness-Gesprächen (1.–3. Gespräch).
 function secClub(){
   const mw=(D.mw||[]).filter(mwPasst);
-  const months=getActiveMonths(),monthNums=months.map(m=>MN.indexOf(m)+1),jahr=new Date().getFullYear();
+  const months=getActiveMonths(),monthNums=months.map(m=>MN.indexOf(m)+1),jahr=cockpitJahr();
   const zr=mw.filter(e=>e.dt.getFullYear()===jahr&&monthNums.includes(e.dt.getMonth()+1));
   const mo=montag(heute()),wo=mw.filter(e=>e.dt>=mo);
   const c=(arr,...ks)=>arr.filter(e=>ks.includes(e.erg)).length;
@@ -278,7 +289,7 @@ function pErbracht(){
     add(bySite[r.standort]||(bySite[r.standort]=agg()),r);
     const lk=r.standort+'|'+r.hm;const l=byL[lk]||(byL[lk]={standort:r.standort,hm:r.hm,n:0,sum:0});l.n++;l.sum+=r.price;
   });
-  const jahr=new Date().getFullYear();
+  const jahr=cockpitJahr();
   const statistik=mi=>{const ym=jahr+'-'+String(mi).padStart(2,'0');let b=0,has=false;TV_LOCS.forEach(l=>{if(!matchS(l.standort))return;const s=D.thevea&&D.thevea.statistik&&D.thevea.statistik[l.standort+'|'+ym];if(s){b+=s.brutto;has=true;}});return has?b:null;};
   const zukunft=rows.filter(r=>r.datum&&r.datum>new Date()).reduce((s,r)=>s+r.price,0);
   // Kennzahlen
@@ -336,7 +347,7 @@ function abgMedifoxArt(r){
   return'privat';
 }
 function abgDaten(){
-  const months=getActiveMonths(),monthNums=months.map(m=>MN.indexOf(m)+1),jahr=new Date().getFullYear();
+  const months=getActiveMonths(),monthNums=months.map(m=>MN.indexOf(m)+1),jahr=cockpitJahr();
   const M={},P={},RE={};
   const mk=(o,k,init)=>o[k]||(o[k]=init());
   const mAgg=(s,m)=>({standort:s,month:m,quelle:null,beh:0,bruttoBeh:0,brutto:0,gkv:0,bg:0,privat:0,privatN:0,ausfall:0,zuz:0,zuzEst:0,netto:0,offen:0,offenN:0,kalender:0});
@@ -476,7 +487,7 @@ function ksDaten(){
   // reicht nur 180 Tage zurück, deshalb kommt das Soll dieser Monate aus den
   // Monatsstunden (tvStdMonat, Rückfall Tracker-Wochenstunden) und den
   // Arbeitstagen Mo–Fr ohne Feiertage.
-  const jahr=new Date().getFullYear(),feier=tvFeiertage(jahr);
+  const jahr=cockpitJahr(),feier=tvFeiertage(jahr);
   const arbeitstage=mi=>{let n=0;const tg=new Date(jahr,mi,0).getDate();for(let d=1;d<=tg;d++){const dt=new Date(jahr,mi-1,d),y=ymdP(dt);if(y>h0)break;if(dt.getDay()===0||dt.getDay()===6||feier.has(y))continue;n++;}return n;};
   Object.keys(KS_CUTOVER).forEach(site=>{if(!matchS(site))return;monthNums.forEach(mi=>{if(mi>=KS_CUTOVER[site])return;const k=site+'|'+mi;const ss=S[k]||(S[k]=mAgg());const personen=D.ctrl.filter(t=>t.s===site);let sollStd=0,n=0;personen.forEach(t=>{const st=tvStdMonat(t,MN[mi-1]);if(st.soll>0){sollStd+=st.soll;n++;}});const at=arbeitstage(mi);if(!n||!at){delete S[k];return;}ss.quelle='tracker';ss.sollStd=sollStd*(at/arbeitstage0(mi));ss.sollTage=n*at;ss.personen=new Set();ss.krankTage=ss.tracker;ss.krankStd=ss.sollTage?ss.tracker*(ss.sollStd/ss.sollTage):0;});});
   function arbeitstage0(mi){let n=0;const tg=new Date(jahr,mi,0).getDate();for(let d=1;d<=tg;d++){const dt=new Date(jahr,mi-1,d),y=ymdP(dt);if(dt.getDay()===0||dt.getDay()===6||feier.has(y))continue;n++;}return n;}
@@ -488,7 +499,7 @@ function ksDaten(){
 // Umgerechnet auf die Soll-Arbeitstage: 15 ÷ Arbeitstage Mo–Fr des Jahres ohne
 // Feiertage. Teilzeit mit weniger Tagen bekommt anteilig weniger Plantage.
 const KS_PLAN_JAHR=15;
-function ksPlanQuote(){const j=new Date().getFullYear(),f=tvFeiertage(j);let n=0;for(let d=new Date(j,0,1);d.getFullYear()===j;d.setDate(d.getDate()+1)){const w=d.getDay();if(w===0||w===6||f.has(tvYmd(d)))continue;n++;}return n?KS_PLAN_JAHR/n:0;}
+function ksPlanQuote(){const j=cockpitJahr(),f=tvFeiertage(j);let n=0;for(let d=new Date(j,0,1);d.getFullYear()===j;d.setDate(d.getDate()+1)){const w=d.getDay();if(w===0||w===6||f.has(tvYmd(d)))continue;n++;}return n?KS_PLAN_JAHR/n:0;}
 function ksPlanPill(ist,plan){if(!plan)return'<span class="pill p-n">—</span>';const d=ist-plan,rel=d/plan;if(Math.abs(rel)<=0.1)return`<span class="pill p-a">im Plan</span>`;return`<span class="pill ${d>0?'p-r':'p-g'}">${d>0?'+':''}${n1(d)} Tage</span>`;}
 function pKrankenstand(){
   const {months,monthNums,P,M,S,h0}=ksDaten();
@@ -735,7 +746,7 @@ function pLiquiditaet(){
 let fcMode='einnahmen';
 function setFC(m){fcMode=m;rPage();}
 function vorschauDaten(){
-  const now=new Date(),cur=now.getMonth();
+  const now=new Date(),cur=istVorjahr()?12:now.getMonth();
   const kim=aS==='Alle'||aS==='KIMOJO Gesamt'||aS==='KIMOJO Physio'||aS==='KIMOJO Ergo',pf=aS==='Alle'||aS==='PF im Park';
   const therapists=D.ctrl.filter(t=>matchS(t.s)),theraNames=new Set(therapists.map(t=>t.n));
   const erbM={};D.raw.forEach(r=>{if(!r.month||!tvRowPasst(r,theraNames))return;erbM[r.month]=(erbM[r.month]||0)+r.price;});
@@ -753,14 +764,14 @@ function vorschauDaten(){
 }
 function pVorschau(){
   if(!D.planK.dashboard&&!D.planP.dashboard)return'<section class="sec"><div class="empty">Keine Plandaten geladen.</div></section>';
-  const data=vorschauDaten(),cur=new Date().getMonth();
+  const data=vorschauDaten(),cur=istVorjahr()?12:new Date().getMonth();
   const sum=(k,src)=>data.reduce((s,d)=>s+d[src][k],0);
   const fc={ein:sum('ein','fc'),kosten:sum('kosten','fc'),gewinn:sum('gewinn','fc'),erbracht:sum('erbracht','fc')},pl={ein:sum('ein','plan'),kosten:sum('kosten','plan'),gewinn:sum('gewinn','plan')};
   const istM=data.filter(d=>d.useIst);
   const trend=k=>istM.length?istM.reduce((s,d)=>s+d.fc[k],0)/istM.length*12:null;
   const delta=(ist,plan,inv)=>{if(!plan)return'';const d=(ist-plan)/Math.abs(plan)*100;const ok=inv?d<=0:d>=0;return`<span class="pill ${ok?'p-g':'p-r'}">${d>=0?'+':''}${n1(d)} % zum Plan</span>`;};
   const lastIst=data.reduce((l,d)=>d.useIst?d.i:l,-1);const istBis=lastIst>=0?'Jan – '+MN[lastIst]:'—';const fehlt=data.filter(d=>d.i<cur&&!d.useIst).map(d=>d.m);
-  let h=`<section class="sec"><div class="sec-h"><h2>Jahresvorschau ${new Date().getFullYear()}</h2><span class="sub">Ist ${istBis} (BWA) + Plan ${MN[cur]} – Dez · ${esc(sn(aS))}${fehlt.length?' · BWA fehlt für '+fehlt.join(', ')+' (Plan eingesetzt)':''}</span></div><div class="grid g3">`;
+  let h=`<section class="sec"><div class="sec-h"><h2>Jahresvorschau ${cockpitJahr()}</h2><span class="sub">Ist ${istBis} (BWA) + Plan ${MN[cur]} – Dez · ${esc(sn(aS))}${fehlt.length?' · BWA fehlt für '+fehlt.join(', ')+' (Plan eingesetzt)':''}</span></div><div class="grid g3">`;
   h+=`<div class="kpi big"><div class="l">Einnahmen Jahresende</div><div class="v">${fmK(fc.ein)}</div><div class="s">${delta(fc.ein,pl.ein)} · Plan <b>${fmK(pl.ein)}</b></div><div class="s">Erbracht statt BWA: <b>${fmK(fc.erbracht)}</b>${trend('ein')?` · Trend <b>${fmK(trend('ein'))}</b>`:''}</div></div>`;
   h+=`<div class="kpi big"><div class="l">Kosten Jahresende</div><div class="v">${fmK(fc.kosten)}</div><div class="s">${delta(fc.kosten,pl.kosten,true)} · Plan <b>${fmK(pl.kosten)}</b></div></div>`;
   h+=`<div class="kpi big"><div class="l">Gewinn Jahresende</div><div class="v ${fc.gewinn>=0?'c-g':'c-r'}">${fmK(fc.gewinn)}</div><div class="s">${delta(fc.gewinn,pl.gewinn)} · Plan <b>${fmK(pl.gewinn)}</b></div><div class="s">Erbracht − Kosten: <b>${fmK(fc.erbracht-fc.kosten)}</b>${trend('gewinn')?` · Trend <b>${fmK(trend('gewinn'))}</b>`:''}</div></div>`;
@@ -781,7 +792,7 @@ function pVorschau(){
   return h;
 }
 function vorschauChart(data,label){
-  const W=720,H=220,pd={t:22,r:70,b:26,l:56},cw=W-pd.l-pd.r,ch=H-pd.t-pd.b,cur=new Date().getMonth();
+  const W=720,H=220,pd={t:22,r:70,b:26,l:56},cw=W-pd.l-pd.r,ch=H-pd.t-pd.b,cur=istVorjahr()?12:new Date().getMonth();
   const all=[...data.map(d=>d.cumFC),...data.map(d=>d.cumPl)];
   const maxV=Math.max(...all,1)*1.05,minV=Math.min(0,...all)*1.05,rg=maxV-minV||1;
   const x=i=>pd.l+i*cw/11,y=v=>pd.t+ch-(v-minV)/rg*ch;
@@ -940,7 +951,7 @@ function tageTabelle(t,rows){
   rows.forEach(r=>{let y;if(r.datum){y=ymdP(r.datum);}else if(r.dateKey){const p=r.dateKey.split('-');y=p[0]+'-'+String(p[1]).padStart(2,'0')+'-'+String(p[2]).padStart(2,'0');}else return;
     const d=byD[y]||(byD[y]={n:0,sum:0,erb:0,offen:0,aus:0,res:0});d.n++;d.sum+=r.price;if(r.kind==='erbracht')d.erb+=r.price;else if(r.kind==='offen')d.offen+=r.price;else if(r.kind==='ausfall')d.aus+=r.price;else d.res+=r.price;});
   const tag=t.ctrl&&t.ctrl.tag||{};
-  const ymds=[...new Set([...Object.keys(byD),...Object.keys(tag).filter(y=>{const mi=+y.slice(5,7);return getActiveMonths().includes(MN[mi-1])&&y.slice(0,4)==String(new Date().getFullYear());})])].sort();
+  const ymds=[...new Set([...Object.keys(byD),...Object.keys(tag).filter(y=>{const mi=+y.slice(5,7);return getActiveMonths().includes(MN[mi-1])&&y.slice(0,4)==String(cockpitJahr());})])].sort();
   if(!ymds.length)return'<div class="empty">Keine Tage.</div>';
   const h0=ymdP(heute());
   let h='<div class="tbl-wrap" style="margin:0"><table style="min-width:0;font-size:12px"><thead><tr><th>Tag</th><th class="r">Termine</th><th class="r">Umsatz</th><th class="r">Stattgef.</th><th class="r">Geplant</th><th class="r">Ausf. · Res.</th><th class="r">Soll h</th><th class="r">Anw. h</th><th class="r">€ / anw. Std.</th></tr></thead><tbody>';

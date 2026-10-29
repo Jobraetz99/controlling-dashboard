@@ -743,7 +743,7 @@ function tvRowPasst(r,theraNames){
   return theraNames.has(r.name)||aS==='KIMOJO Gesamt';
 }
 async function tvLaden(){
-  const jahr=new Date().getFullYear();
+  const jahr=cockpitJahr();
   const j=new Date(),monate=[];
   for(let i=TV_PROG_MONATE-1;i>=0;i--){const d=new Date(j.getFullYear(),j.getMonth()-i,1);monate.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'));}
   const L=f=>loadJSONPfad(f).catch(()=>null);
@@ -751,16 +751,33 @@ async function tvLaden(){
   const az={},abwes={};const f4P=L(TV_AZ_F4_VOLL).then(v=>Array.isArray(v)&&v.length?v:L(TV_AZ_F4));
   const [uebAlt,uebWp]=await Promise.all([L(TV_DIR+'Verordnungsuebersicht.json'),L(TV_DIR+'vo_uebersicht_wp.json')]);
   for(const loc of TV_LOCS){
-    const [hist,uebLoc,det,...progs]=await Promise.all([
+    let [hist,uebLoc,det,...progs]=await Promise.all([
       L(TV_DIR+'termine_historie_'+loc.suf+'.json'),
       loc.suf==='wp'?Promise.resolve(uebWp||uebAlt):L(TV_DIR+'vo_uebersicht_'+loc.suf+'.json'),
       L(TV_DIR+'verordnung_details_'+loc.suf+'.json'),
       ...monate.map(m=>L(TV_PROG_DIR+loc.prog+m+'.json'))
     ]);
     az[loc.suf]=await L(TV_DIR+'arbeitszeiten_roh_'+loc.suf+'.json');
+    // Monatsarchiv (Flow „Cockpit Monatsarchiv“): Termine, die aus dem
+    // 180-Tage-Fenster von thevea gefallen sind, und frühere Arbeitszeit-
+    // Datensätze. Solange ein Termin im Live-Export liegt, gilt die Live-Fassung;
+    // ein archivierter Termin im Live-Zeitraum, der live fehlt, wurde gelöscht.
+    const arch=typeof tvArchivLaden==='function'?await tvArchivLaden(loc.suf).catch(()=>null):null;
+    if(arch&&arch.termine.length){
+      const live=(hist&&hist.data&&hist.data.termine)||[];const liveIds=new Set(live.map(t=>t&&t.id));
+      const ab=live.reduce((x,t)=>t&&t.from&&(!x||t.from<x)?t.from:x,null);
+      const m=new Map();arch.termine.forEach(t=>{if(t&&t.id!=null&&(!ab||t.from<ab||liveIds.has(t.id)))m.set(t.id,t);});
+      live.forEach(t=>{if(t&&t.id!=null)m.set(t.id,t);});
+      hist={data:{termine:[...m.values()]}};D.thevea.archiv=(D.thevea.archiv||0)+arch.termine.length;
+    }
+    if(arch&&arch.az.length){
+      const m=new Map();arch.az.forEach(r=>{if(r&&r.id!=null)m.set(r.id,Object.assign({},r,{isCurrentlyValid:false}));});
+      (az[loc.suf]||[]).forEach(r=>{if(r&&r.id!=null)m.set(r.id,r);});az[loc.suf]=[...m.values()];
+    }
     abwes[loc.suf]=(await L(TV_DIR+'abwesenheiten_historie_'+loc.suf+'.json'))||(await L(TV_DIR+'abwesenheiten_roh_'+loc.suf+'.json'))||[];
     if(!hist){D.thevea.fehlt.push('termine_historie_'+loc.suf+'.json');continue;}
     const r=tvBerechne(loc,hist,tvVoMap(uebLoc),tvDetMap(det),tvProgMap(progs),D.ctrl,jahr);
+    try{const rv=tvBerechne(loc,hist,tvVoMap(uebLoc),tvDetMap(det),tvProgMap(progs),D.ctrl,jahr-1);D.thevea.rowsVJ=(D.thevea.rowsVJ||[]).concat(rv.rows);}catch(e){}
     D.thevea.rows=D.thevea.rows.concat(r.rows);D.thevea.stat[loc.standort]=r.stat;Object.assign(D.thevea.personen,r.personen);
     // thevea-eigene Umsatzstatistik des jeweiligen Monats als Gegenprobe.
     progs.forEach((f,i)=>{
@@ -774,6 +791,9 @@ async function tvLaden(){
   // Kitzingen-Block zeigt sie nur noch als Hinweis.
   const extra=r=>r.src!=='thevea'&&String(r.filiale||'')==='PHFIP'&&tvIstKurs(r);
   D.thevea.kitzExtra=D.raw.filter(extra);D.raw=D.raw.filter(r=>!extra(r));
+  // Vorjahr für den Vergleich: gleiche Regeln (ohne Kurse, KIMOJO-Medifox nur bis
+  // zum Cutover) plus die thevea-Zeilen des Vorjahres aus Live-Export und Archiv.
+  {const cutV=new Date(TV_LOCS[0].cutover+'T00:00:00');D.rawVJ=(D.rawVJ||[]).filter(r=>!extra(r)).filter(r=>{if(r.src==='thevea')return false;if(!String(r.filiale||'').startsWith('KIMOJO')||!r.dateKey)return true;const q=r.dateKey.split('-');return new Date(+q[0],+q[1]-1,+q[2])<cutV;}).concat(D.thevea.rowsVJ||[]);}
   if(!D.thevea.rows.length){try{tvStammdaten(jahr,az,f4,abwes);}catch(e){console.warn('Stammdaten:',e);}return;}
   const cut=new Date(TV_LOCS[0].cutover+'T00:00:00');
   const vorher=D.raw.length;
@@ -812,13 +832,16 @@ function tvFeiertage(j){
 }
 const TV_WD=['SONNTAG','MONTAG','DIENSTAG','MITTWOCH','DONNERSTAG','FREITAG','SAMSTAG'];
 function tvR1(x){return Math.round(x*10)/10;}
+// Jahr, das das Cockpit gerade zeigt (Jahresauswahl in app.js: var aJ); ohne
+// Auswahl (alte Ansicht) das laufende Kalenderjahr.
+function cockpitJahr(){return(typeof aJ!=='undefined'&&aJ)?+aJ:new Date().getFullYear();}
 // Stunden eines Monats: aus thevea/Medifox (t.std), sonst Tracker-Wochenstunden × 4,33.
 // Ein- und Austritt (t.ab/t.bis, aus dem ersten/letzten Termin in tvStammdaten):
 // Monate ganz davor bzw. danach haben kein Soll, der Ein-/Austrittsmonat zählt
 // bei Tracker-Stunden anteilig nach Arbeitstagen.
 function tvArbeitstage(j,mi,von,bis){const f=tvFeiertage(j),n=new Date(j,mi,0).getDate();let c=0;for(let d=1;d<=n;d++){const dt=new Date(j,mi-1,d),y=tvYmd(dt);if(dt.getDay()===0||dt.getDay()===6||f.has(y))continue;if(von&&y<von)continue;if(bis&&y>bis)continue;c++;}return c;}
 function tvStdMonat(t,m){
-  const j=new Date().getFullYear(),mi=MN.indexOf(m)+1,ym=j+'-'+String(mi).padStart(2,'0');
+  const j=cockpitJahr(),mi=MN.indexOf(m)+1,ym=j+'-'+String(mi).padStart(2,'0');
   if(t.ab&&t.ab.slice(0,7)>ym)return{soll:0,anw:0,q:'vorEintritt'};
   if(t.bis&&t.bis.slice(0,7)<ym)return{soll:0,anw:0,q:'nachAustritt'};
   if(t.std&&t.std[m])return t.std[m];

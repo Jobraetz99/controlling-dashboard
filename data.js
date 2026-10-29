@@ -262,7 +262,7 @@ function tvRowPasst(r,theraNames){
   return theraNames.has(r.name)||aS==='KIMOJO Gesamt';
 }
 async function tvLaden(){
-  const jahr=new Date().getFullYear();
+  const jahr=cockpitJahr();
   const j=new Date(),monate=[];
   for(let i=TV_PROG_MONATE-1;i>=0;i--){const d=new Date(j.getFullYear(),j.getMonth()-i,1);monate.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'));}
   const L=f=>loadJSONPfad(f).catch(()=>null);
@@ -270,16 +270,33 @@ async function tvLaden(){
   const az={},abwes={};const f4P=L(TV_AZ_F4_VOLL).then(v=>Array.isArray(v)&&v.length?v:L(TV_AZ_F4));
   const [uebAlt,uebWp]=await Promise.all([L(TV_DIR+'Verordnungsuebersicht.json'),L(TV_DIR+'vo_uebersicht_wp.json')]);
   for(const loc of TV_LOCS){
-    const [hist,uebLoc,det,...progs]=await Promise.all([
+    let [hist,uebLoc,det,...progs]=await Promise.all([
       L(TV_DIR+'termine_historie_'+loc.suf+'.json'),
       loc.suf==='wp'?Promise.resolve(uebWp||uebAlt):L(TV_DIR+'vo_uebersicht_'+loc.suf+'.json'),
       L(TV_DIR+'verordnung_details_'+loc.suf+'.json'),
       ...monate.map(m=>L(TV_PROG_DIR+loc.prog+m+'.json'))
     ]);
     az[loc.suf]=await L(TV_DIR+'arbeitszeiten_roh_'+loc.suf+'.json');
+    // Monatsarchiv (Flow „Cockpit Monatsarchiv“): Termine, die aus dem
+    // 180-Tage-Fenster von thevea gefallen sind, und frühere Arbeitszeit-
+    // Datensätze. Solange ein Termin im Live-Export liegt, gilt die Live-Fassung;
+    // ein archivierter Termin im Live-Zeitraum, der live fehlt, wurde gelöscht.
+    const arch=typeof tvArchivLaden==='function'?await tvArchivLaden(loc.suf).catch(()=>null):null;
+    if(arch&&arch.termine.length){
+      const live=(hist&&hist.data&&hist.data.termine)||[];const liveIds=new Set(live.map(t=>t&&t.id));
+      const ab=live.reduce((x,t)=>t&&t.from&&(!x||t.from<x)?t.from:x,null);
+      const m=new Map();arch.termine.forEach(t=>{if(t&&t.id!=null&&(!ab||t.from<ab||liveIds.has(t.id)))m.set(t.id,t);});
+      live.forEach(t=>{if(t&&t.id!=null)m.set(t.id,t);});
+      hist={data:{termine:[...m.values()]}};D.thevea.archiv=(D.thevea.archiv||0)+arch.termine.length;
+    }
+    if(arch&&arch.az.length){
+      const m=new Map();arch.az.forEach(r=>{if(r&&r.id!=null)m.set(r.id,Object.assign({},r,{isCurrentlyValid:false}));});
+      (az[loc.suf]||[]).forEach(r=>{if(r&&r.id!=null)m.set(r.id,r);});az[loc.suf]=[...m.values()];
+    }
     abwes[loc.suf]=(await L(TV_DIR+'abwesenheiten_historie_'+loc.suf+'.json'))||(await L(TV_DIR+'abwesenheiten_roh_'+loc.suf+'.json'))||[];
     if(!hist){D.thevea.fehlt.push('termine_historie_'+loc.suf+'.json');continue;}
     const r=tvBerechne(loc,hist,tvVoMap(uebLoc),tvDetMap(det),tvProgMap(progs),D.ctrl,jahr);
+    try{const rv=tvBerechne(loc,hist,tvVoMap(uebLoc),tvDetMap(det),tvProgMap(progs),D.ctrl,jahr-1);D.thevea.rowsVJ=(D.thevea.rowsVJ||[]).concat(rv.rows);}catch(e){}
     D.thevea.rows=D.thevea.rows.concat(r.rows);D.thevea.stat[loc.standort]=r.stat;Object.assign(D.thevea.personen,r.personen);
     // thevea-eigene Umsatzstatistik des jeweiligen Monats als Gegenprobe.
     progs.forEach((f,i)=>{
@@ -293,6 +310,9 @@ async function tvLaden(){
   // Kitzingen-Block zeigt sie nur noch als Hinweis.
   const extra=r=>r.src!=='thevea'&&String(r.filiale||'')==='PHFIP'&&tvIstKurs(r);
   D.thevea.kitzExtra=D.raw.filter(extra);D.raw=D.raw.filter(r=>!extra(r));
+  // Vorjahr für den Vergleich: gleiche Regeln (ohne Kurse, KIMOJO-Medifox nur bis
+  // zum Cutover) plus die thevea-Zeilen des Vorjahres aus Live-Export und Archiv.
+  {const cutV=new Date(TV_LOCS[0].cutover+'T00:00:00');D.rawVJ=(D.rawVJ||[]).filter(r=>!extra(r)).filter(r=>{if(r.src==='thevea')return false;if(!String(r.filiale||'').startsWith('KIMOJO')||!r.dateKey)return true;const q=r.dateKey.split('-');return new Date(+q[0],+q[1]-1,+q[2])<cutV;}).concat(D.thevea.rowsVJ||[]);}
   if(!D.thevea.rows.length){try{tvStammdaten(jahr,az,f4,abwes);}catch(e){console.warn('Stammdaten:',e);}return;}
   const cut=new Date(TV_LOCS[0].cutover+'T00:00:00');
   const vorher=D.raw.length;
@@ -331,13 +351,16 @@ function tvFeiertage(j){
 }
 const TV_WD=['SONNTAG','MONTAG','DIENSTAG','MITTWOCH','DONNERSTAG','FREITAG','SAMSTAG'];
 function tvR1(x){return Math.round(x*10)/10;}
+// Jahr, das das Cockpit gerade zeigt (Jahresauswahl in app.js: var aJ); ohne
+// Auswahl (alte Ansicht) das laufende Kalenderjahr.
+function cockpitJahr(){return(typeof aJ!=='undefined'&&aJ)?+aJ:new Date().getFullYear();}
 // Stunden eines Monats: aus thevea/Medifox (t.std), sonst Tracker-Wochenstunden × 4,33.
 // Ein- und Austritt (t.ab/t.bis, aus dem ersten/letzten Termin in tvStammdaten):
 // Monate ganz davor bzw. danach haben kein Soll, der Ein-/Austrittsmonat zählt
 // bei Tracker-Stunden anteilig nach Arbeitstagen.
 function tvArbeitstage(j,mi,von,bis){const f=tvFeiertage(j),n=new Date(j,mi,0).getDate();let c=0;for(let d=1;d<=n;d++){const dt=new Date(j,mi-1,d),y=tvYmd(dt);if(dt.getDay()===0||dt.getDay()===6||f.has(y))continue;if(von&&y<von)continue;if(bis&&y>bis)continue;c++;}return c;}
 function tvStdMonat(t,m){
-  const j=new Date().getFullYear(),mi=MN.indexOf(m)+1,ym=j+'-'+String(mi).padStart(2,'0');
+  const j=cockpitJahr(),mi=MN.indexOf(m)+1,ym=j+'-'+String(mi).padStart(2,'0');
   if(t.ab&&t.ab.slice(0,7)>ym)return{soll:0,anw:0,q:'vorEintritt'};
   if(t.bis&&t.bis.slice(0,7)<ym)return{soll:0,anw:0,q:'nachAustritt'};
   if(t.std&&t.std[m])return t.std[m];
@@ -641,6 +664,7 @@ async function loadAll(){
     // Resolve PHFIP drive
     try{const pSite=await gql(`https://graph.microsoft.com/v1.0/sites/${PHFIP_SITE.host}:${PHFIP_SITE.path}`);if(pSite){const pDrive=await gql(`https://graph.microsoft.com/v1.0/sites/${pSite.id}/drive`);if(pDrive)phfipDriveId=pDrive.id;}}catch(e){console.warn('PHFIP site:',e);}
 
+    lt.textContent='Suche Dateien für '+cockpitJahr()+'...';await dateienAufJahrStellen();
     lt.textContent='Lade alle Daten parallel...';
 
     // ═══ PARALLEL LOADING ═══
@@ -662,7 +686,7 @@ async function loadAll(){
     const bankPP=loadBank(FILES.bankP);
 
     // Group 4: Plan data (known sheet names)
-    const planDashKP=getSheet(FILES.planK,'Dashboard 2026').catch(()=>null);
+    const planDashKP=getSheet(FILES.planK,'Dashboard '+cockpitJahr()).then(r=>r||getSheet(FILES.planK,'Dashboard')).catch(()=>null);
     const planEinKP=getSheet(FILES.planK,'Planeinnahmen').catch(()=>null);
     const planKSheetsP=getSheetNames(FILES.planK).catch(()=>[]);
     const planDashPP=getSheet(FILES.planP,'Dashboard').catch(()=>null);
@@ -671,12 +695,12 @@ async function loadAll(){
 
     // Group 5: Auslastung (parallel)
     const auslKP=gql(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${FILES.kpi}/workbook/worksheets('Auslastung')/usedRange`).catch(()=>null);
-    const auslPP=phfipDriveId?gql(`https://graph.microsoft.com/v1.0/drives/${phfipDriveId}/items/${KPI_PHFIP_ID}/workbook/worksheets('Auslastung')/usedRange`).catch(()=>null):Promise.resolve(null);
+    const auslPP=phfipDriveId&&D.kpiPhfipId?gql(`https://graph.microsoft.com/v1.0/drives/${phfipDriveId}/items/${D.kpiPhfipId}/workbook/worksheets('Auslastung')/usedRange`).catch(()=>null):Promise.resolve(null);
 
     // Group 5b: Termine (KIMOJO Physio + Ergo + PHFIP Physio)
     const termineKPhysioP=getSheet(FILES.kpi,'KIMOJO KPI Physio').catch(()=>null);
     const termineKErgoP=getSheet(FILES.kpi,'KIMOJO KPI Ergo').then(r=>r||getSheet(FILES.kpi,'KIMOJO KPI E')).catch(()=>null);
-    const terminePPhysioP=phfipDriveId?gql(`https://graph.microsoft.com/v1.0/drives/${phfipDriveId}/items/${KPI_PHFIP_ID}/workbook/worksheets('PhFiP KPI Physio')/usedRange`).then(r=>r?r.values:null).catch(()=>null):Promise.resolve(null);
+    const terminePPhysioP=phfipDriveId&&D.kpiPhfipId?gql(`https://graph.microsoft.com/v1.0/drives/${phfipDriveId}/items/${D.kpiPhfipId}/workbook/worksheets('PhFiP KPI Physio')/usedRange`).then(r=>r?r.values:null).catch(()=>null):Promise.resolve(null);
 
     // Group 6: Rechnungsübersicht
     const rechnungenP=getSheetNames(FILES.rechnungen).then(sheets=>getSheet(FILES.rechnungen,sheets[0]||'Tabelle1')).catch(()=>null);
@@ -715,7 +739,7 @@ async function loadAll(){
     medifoxResults.forEach(({d,filiale})=>{
       if(d){const parsed=parseRaw(d);parsed.forEach(r=>r.filiale=filiale);allRaw=allRaw.concat(parsed);}
     });
-    if(allRaw.length>0)D.raw=allRaw;
+    if(allRaw.length>0){D.rawVJ=allRaw.filter(r=>r.year===cockpitJahr()-1);D.raw=allRaw.filter(r=>!r.year||r.year===cockpitJahr());}
     else{
       // Fallback: KPI Excel
       try{const raw=await getSheet(FILES.kpi,'Rohdaten Umsatz');if(raw){D.raw=parseRaw(raw);D.raw.forEach(r=>r.filiale='KIMOJO');}}catch(e){}
@@ -2166,7 +2190,7 @@ function parseBWA(rows){
       d.items[curCat].push({n:b.replace(/^\s+/,''),v});
     }
   }
-  try{d.voll=bwaVoll(rows);}catch(e){console.warn('BWA voll:',e);}
+  try{d.voll=bwaVoll(rows);}catch(e){console.warn('BWA voll:',e);}d.jahr=bwaJahr(rows);
   return d;
 }
 
@@ -2209,6 +2233,7 @@ function parseBankXLSX(rows){
       else{const m2=s.match(/(\d{4})-(\d{2})-(\d{2})/);if(m2){month=parseInt(m2[2]);dateVal=new Date(parseInt(m2[1]),month-1,parseInt(m2[3]));}
       else{try{dateVal=new Date(dv);if(!isNaN(dateVal)){month=dateVal.getMonth()+1;}}catch(e){}}}}
     if(!month||month<1||month>12)continue;
+    if(dateVal&&!isNaN(dateVal)&&dateVal.getFullYear()!==cockpitJahr()&&dateVal.getUTCFullYear()!==cockpitJahr())continue;
     let betrag=r[betragCol];
     if(typeof betrag==='string')betrag=parseFloat(betrag.replace(/\./g,'').replace(',','.'));
     else betrag=parseFloat(betrag);
@@ -2321,7 +2346,7 @@ function parseRaw(rows){
     const dv3=r[3];
     if(typeof dv3==='number'){durMin=Math.round(dv3*1440);}else{const durStr=String(dv3||'');const dm=durStr.match(/(\d{1,2}):(\d{2})/);if(dm)durMin=parseInt(dm[1])*60+parseInt(dm[2]);}
     const dateKey=dateObj?(dateObj.getUTCFullYear()+'-'+(dateObj.getUTCMonth()+1)+'-'+dateObj.getUTCDate()):null;
-    d.push({name:clean,month,week,price,billed,wd,startMin,durMin,dateKey,leistung:String(r[6]||'').trim(),posNr:String(r[5]||'').trim(),patient:String(r[4]||'').trim(),vo:String(r[9]||'').trim()});
+    d.push({name:clean,month,year:dateObj?dateObj.getUTCFullYear():null,week,price,billed,wd,startMin,durMin,dateKey,leistung:String(r[6]||'').trim(),posNr:String(r[5]||'').trim(),patient:String(r[4]||'').trim(),vo:String(r[9]||'').trim()});
   }
   return d;
 }
@@ -2565,7 +2590,7 @@ function getMonthFromSheet(name){
   for(const[en,de] of Object.entries(enMap)){if(nl.includes(en.toLowerCase()))return de;}
   return null;
 }
-function getBWAMonths(bwa){return Object.keys(bwa).map(s=>({sheet:s,month:getMonthFromSheet(s)})).filter(x=>x.month);}
+function getBWAMonths(bwa){return Object.keys(bwa).filter(s=>!bwa[s]||!bwa[s].jahr||bwa[s].jahr===cockpitJahr()).map(s=>({sheet:s,month:getMonthFromSheet(s)})).filter(x=>x.month);}
 function getBWA(bwa,month){const entry=getBWAMonths(bwa).find(x=>x.month===month);return entry?bwa[entry.sheet]:null;}
 function sumBWA(bwa,months){
   const s={umsatz:0,personal:0,raum:0,versicherung:0,fahrzeuge:0,werbung:0,sonstige:0,gesamtkosten:0,ergebnis:0,items:{}};
@@ -2632,14 +2657,14 @@ function rAusl(){
 // ═══ AUS DEM RENDER-TEIL ÜBERNOMMEN ═══
 function getActiveMonths(){
   if(aM==='AKTUELL'){
-    const now=new Date();const currentMonth=now.getMonth();// 0-based, so March=2
+    const now=new Date();const currentMonth=cockpitJahr()<now.getFullYear()?11:now.getMonth();// 0-based; abgeschlossenes Jahr = alle Monate
     const rawMonths=new Set(D.raw.map(r=>r.month).filter(Boolean).map(m=>MN[m-1]));
     const bwaMonths=new Set([...getBWAMonths(D.bwaK).map(x=>x.month),...getBWAMonths(D.bwaP).map(x=>x.month)]);
     const all=new Set([...bwaMonths,...rawMonths]);
     return MN.filter((m,i)=>all.has(m)&&i<=currentMonth);// Only up to and including current month
   }
   if(aM==='YTD'){
-    const now=new Date();const currentMonth=now.getMonth();
+    const now=new Date();const currentMonth=cockpitJahr()<now.getFullYear()?12:now.getMonth();
     const bwaMonths=new Set([...getBWAMonths(D.bwaK).map(x=>x.month),...getBWAMonths(D.bwaP).map(x=>x.month)]);
     const rawMonths=new Set(D.raw.map(r=>r.month).filter(Boolean).map(m=>MN[m-1]));
     const all=new Set([...bwaMonths,...rawMonths]);
@@ -2891,7 +2916,8 @@ function bankVoll(rows){
   const datum=v=>{if(typeof v==='number'&&v>40000)return new Date(Math.round((v-25569)*86400000));const s=String(v||'');let m=s.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);if(m)return new Date(Date.UTC(+m[3],+m[2]-1,+m[1]));m=s.match(/(\d{4})-(\d{2})-(\d{2})/);if(m)return new Date(Date.UTC(+m[1],+m[2]-1,+m[3]));const n=parseFloat(s);if(n>40000)return new Date(Math.round((n-25569)*86400000));return null;};
   const out={monate:{},von:null,bis:null,iban:'',kat:{ein:{},aus:{}},partner:{ein:{},aus:{}}};
   for(let i=1;i<rows.length;i++){
-    const r=rows[i];if(!r)continue;const d=datum(r[cD]);if(!d)continue;const b=num(r[cB]);if(isNaN(b))continue;
+    const r=rows[i];if(!r)continue;const d=datum(r[cD]);if(!d)continue;const b=num(r[cB]);if(isNaN(b))continue;if(d.getUTCFullYear()!==cockpitJahr())continue;
+    if(d.getUTCFullYear()!==cockpitJahr())continue;
     if(!out.iban&&r[cI])out.iban=String(r[cI]);
     if(!out.von||d<out.von)out.von=d;if(!out.bis||d>out.bis)out.bis=d;
     const mn=MNB[d.getUTCMonth()+1],jahr=d.getUTCFullYear();
@@ -2959,4 +2985,56 @@ function rechnungenAgg(rows){
     R.rows.push({nr,typ,prefix,saldo,datum:String(r[2]||''),kt:String(r[5]||'')});
   }
   return R;
+}
+
+
+// ═══ MONATSARCHIV (thevea) ═══════════════════════════════════════════════════
+// Flow „Cockpit Monatsarchiv“ schreibt jede Nacht nach
+// Patientenchecker/Dateien Export/archiv/: termine_<wp|we>_YYYY-MM.json (laufender
+// Monat, Vormonat, Vor-Vormonat; ältere bleiben eingefroren) und
+// arbeitszeiten_<wp|we>_YYYY-MM.json (Arbeitszeit-Datensätze des Monats).
+async function tvArchivLaden(suf){
+  const dir=TV_DIR+'archiv/';let kinder=[];
+  try{kinder=await graphKinder(dir);}catch(e){}
+  const namen=(kinder||[]).map(k=>k.name||'');
+  const tn=namen.filter(n=>new RegExp('^termine_'+suf+'_\\d{4}-\\d{2}\\.json$').test(n)).sort();
+  const an=namen.filter(n=>new RegExp('^arbeitszeiten_'+suf+'_\\d{4}-\\d{2}\\.json$').test(n)).sort();
+  const L=f=>loadJSONPfad(dir+f).catch(()=>null);
+  const [ts,as]=await Promise.all([Promise.all(tn.map(L)),Promise.all(an.map(L))]);
+  return{termine:ts.flatMap(f=>(f&&f.data&&f.data.termine)||[]),az:as.flatMap(f=>Array.isArray(f)?f:[]),dateien:tn.length+an.length};
+}
+
+// ═══ DATEIEN JE JAHR ═════════════════════════════════════════════════════════
+// Weekly Tracker und Planungen gibt es je Jahr als eigene Datei. Für ein anderes
+// Jahr als 2026 sucht das Cockpit im selben Ordner die Datei, deren Name statt
+// „2026“ das gewählte Jahr trägt (z. B. „KIMOJO_Weekly KPI Tracker 2027.xlsx“).
+// Abweichende Dateien lassen sich hier fest eintragen: FILES_JAHR[2027]={kpi:'<id>'}.
+// BWA und Bank bleiben dieselben Dateien; dort zählt das Jahr in den Daten.
+const DATEI_JAHR_BASIS=2026;
+const FILES_JAHR={};
+const DATEIEN_BASIS={kpi:FILES.kpi,planK:FILES.planK,planP:FILES.planP,bwaK:FILES.bwaK,bwaP:FILES.bwaP,bankK:FILES.bankK,bankP:FILES.bankP,kpiPhfip:KPI_PHFIP_ID};
+async function dateiFuerJahr(id,jahr,drive){
+  if(!id||!drive)return null;if(jahr===DATEI_JAHR_BASIS)return id;
+  try{
+    const it=await gql('https://graph.microsoft.com/v1.0/drives/'+drive+'/items/'+id+'?$select=name,parentReference');
+    if(!it||!it.name||it.name.indexOf(String(DATEI_JAHR_BASIS))<0)return null;
+    const nn=it.name.split(String(DATEI_JAHR_BASIS)).join(String(jahr));
+    const x=await gql('https://graph.microsoft.com/v1.0/drives/'+drive+'/items/'+it.parentReference.id+':/'+encodeURIComponent(nn));
+    return x&&x.id||null;
+  }catch(e){return null;}
+}
+async function dateienAufJahrStellen(){
+  const j=cockpitJahr(),fj=FILES_JAHR[j]||{};D.dateienJahr={jahr:j,fehlt:[]};
+  for(const k of ['kpi','planK','planP']){
+    FILES[k]=fj[k]||await dateiFuerJahr(DATEIEN_BASIS[k],j,driveId);
+    if(!FILES[k])D.dateienJahr.fehlt.push(k);
+  }
+  for(const k of ['bwaK','bwaP','bankK','bankP'])FILES[k]=fj[k]||DATEIEN_BASIS[k];
+  D.kpiPhfipId=fj.kpiPhfip||await dateiFuerJahr(DATEIEN_BASIS.kpiPhfip,j,phfipDriveId);
+  if(!D.kpiPhfipId)D.dateienJahr.fehlt.push('kpiPhfip');
+}
+// Jahr aus dem Kopf eines BWA-Blatts („Soll-/Ist-Vergleich Jul 2026“, „Ist Jul/2026“).
+function bwaJahr(rows){
+  for(const r of (rows||[]).slice(0,4)){const m=String((r||[]).join(' ')).match(/(?:\/|\s)(20\d\d)\b/);if(m)return +m[1];}
+  return null;
 }
