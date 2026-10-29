@@ -3185,8 +3185,9 @@ async function dateiFuerJahr(id,jahr,drive){
   }catch(e){return null;}
 }
 // GF-Gehalt, das in einer KIMOJO-Planung schon steckt: Zeilen „Jo“ und „Kili“ im Blatt
-// Planausgaben (Name in Spalte B, Januar bis Dezember ab Spalte D).
-function planGfLesen(rows){const g=Array(12).fill(0);(rows||[]).forEach(r=>{const l=String((r||[])[1]||'').trim().toLowerCase();if(l!=='jo'&&l!=='kili')return;for(let i=0;i<12;i++)g[i]+=parseFloat(r[3+i])||0;});return g;}
+// Planausgaben (Name, Kürzel, dann Januar bis Dezember). Graph liefert den benutzten
+// Bereich ab der ersten gefüllten Spalte, deshalb wird die Namensspalte gesucht.
+function planGfLesen(rows){const g=Array(12).fill(0);(rows||[]).forEach(r=>{r=r||[];const j=[0,1,2].find(x=>/^(jo|kili)$/i.test(String(r[x]||'').trim()));if(j==null)return;for(let i=0;i<12;i++)g[i]+=parseFloat(r[j+2+i])||0;});return g;}
 async function planGfLaden(id){if(!id)return null;const n=(await getSheetNames(id).catch(()=>[])).find(s=>s.trim().toLowerCase()==='planausgaben');if(!n)return null;return planGfLesen(await getSheet(id,n).catch(()=>null));}
 // Planung eines anderen Jahres (Folgejahr für den Planungsreiter): nur das Dashboard-Blatt
 async function planJahrLaden(jahr){
