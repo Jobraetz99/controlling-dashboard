@@ -2924,11 +2924,21 @@ function mrDatum(v){
 }
 // Hauptdatei (FILES.rechnungen) plus alle Exporte im Ordner „Medifox Rechnungen“,
 // doppelte Belege (gleiche Nummer, Belegtyp, Datum, Betrag) zählen einmal.
+// Flow-Export: {monat, rechnungen:[{Nr,Belegdatum,Belegtyp,KostentraegerTyp,Brutto,Storniert,IsMahnung,Saldo}]}
+// in die Spaltenfolge MR_SPALTEN bringen.
+function mrAusJson(f){
+  const arr=Array.isArray(f)?f:(f&&f.rechnungen)||[];
+  return arr.filter(r=>r&&r.Nr).map(r=>{const z=new Array(MR_SPALTEN.length).fill(null);z[0]=r.Nr;z[1]=r.Nr;z[2]=r.Belegdatum;z[3]=r.Belegtyp;z[6]=r.KostentraegerTyp;z[9]=r.Brutto!=null?r.Brutto:r.GesamtbetragBrutto;z[16]=(r.Storniert||r.IsStorniert)?'ja':'nein';z[17]=r.Saldo;return z;});
+}
 async function mrZusammen(hauptRows){
   const alle=[MR_SPALTEN].concat(mrNorm(hauptRows));
   try{
-    const kinder=(await graphKinder(MR_ORDNER)).filter(k=>/\.xlsx$/i.test(k.name||''));
-    for(const k of kinder){try{const sh=await getSheetNames(k.id);const rows=await getSheet(k.id,(sh&&sh[0])||'Tabelle1');mrNorm(rows).forEach(r=>alle.push(r));}catch(e){console.warn('Medifox-Rechnungen',k.name,e);}}
+    const kinder=await graphKinder(MR_ORDNER);
+    for(const k of kinder.filter(k=>/\.xlsx$/i.test(k.name||''))){try{const sh=await getSheetNames(k.id);const rows=await getSheet(k.id,(sh&&sh[0])||'Tabelle1');mrNorm(rows).forEach(r=>alle.push(r));}catch(e){console.warn('Medifox-Rechnungen',k.name,e);}}
+    // JSON-Monatsdateien des Flows „Medifox Rechnungen“ (medifox-rechnungen-YYYY-MM.json)
+    const jsons=kinder.filter(k=>/\.json$/i.test(k.name||''));
+    const texte=await Promise.all(jsons.map(k=>graphText(MR_ORDNER+k.name).catch(()=>null)));
+    texte.forEach(t=>{try{mrAusJson(JSON.parse(String(t||'').replace(/^\uFEFF/,''))).forEach(r=>alle.push(r));}catch(e){}});
   }catch(e){console.warn('Ordner Medifox Rechnungen:',e);}
   const seen=new Set();
   return alle.filter((r,i)=>{if(i===0)return true;const key=[r[0],r[3],mrDatum(r[2]),r[9]].join('|');if(seen.has(key))return false;seen.add(key);return true;});
