@@ -831,6 +831,13 @@ function liqVorschau(){
   h+=`<div class="kpi"><div class="l">In ${LIQ_WOCHEN} Wochen</div><div class="v ${w[LIQ_WOCHEN-1].ende>=P.start?'c-g':'c-r'}">${eur0(w[LIQ_WOCHEN-1].ende)}</div><div class="s">${w[LIQ_WOCHEN-1].ende-P.start>=0?'+':''}${eur0(w[LIQ_WOCHEN-1].ende-P.start)} gegenüber heute</div></div>`;
   h+=`<div class="kpi"><div class="l">Mindestbestand</div><div class="v">${eur0(fix)}</div><div class="s">1 Monat Fixkosten · ${esc(P.fix.det.length?'BWA ohne Abschreibungen':'Auszahlungen ø Monat')}</div></div>`;
   h+='</div>';
+  const R=liqReserve(),res=P.start+R.ford+R.offSum;
+  h+='<div class="grid" style="margin-top:12px">';
+  h+=`<div class="kpi"><div class="l">Offene Forderungen</div><div class="v" style="color:var(--blue)">${eur0(R.ford)}</div><div class="s">${n0(R.nRe)} Rechnungen gestellt, noch nicht bezahlt</div></div>`;
+  h+=`<div class="kpi"><div class="l">Erbracht, nicht abgerechnet</div><div class="v c-a">${eur0(R.offSum)}</div><div class="s">Leistungen bis heute ohne Rechnung</div></div>`;
+  h+=`<div class="kpi"><div class="l">Liquiditätsreserve</div><div class="v">${eur0(res)}</div><div class="s">Kontostand + Forderungen + Unabgerechnet</div></div>`;
+  h+='</div>';
+  h+='<p class="hint">Forderungen und unabgerechnete Leistungen sind nicht in der Wochenvorschau enthalten: Die Zahlungen der Kassen stecken dort schon über den Durchschnitt der letzten Wochen. Einzelheiten stehen unter dem Wochenverlauf.</p>';
   h+='<div style="margin-top:14px">'+linienChart(w.map(kwL),[{col:'var(--primary)',vals:w.map(x=>x.ende)},{col:'var(--amber)',vals:w.map(()=>fix),dash:true}].concat(P.kredit?[{col:'var(--red)',vals:w.map(()=>-P.kredit),dash:true}]:[]))+'</div>';
   h+=`<p class="hint">Linie: Kontostand am Wochenende. Gestrichelt: Mindestbestand${P.kredit?' und Grenze der Kreditlinie':''}.</p>`;
   // Wochentabelle
@@ -839,6 +846,7 @@ function liqVorschau(){
   const sE=w.reduce((t,x)=>t+x.ein,0),sA=w.reduce((t,x)=>t+x.aus,0);
   h+=`<tr class="sum"><td colspan="3">${LIQ_WOCHEN} Wochen</td><td class="r">${eur0(sE)}</td><td class="r">${eur0(sA)}</td><td class="r">${eur0(w[LIQ_WOCHEN-1].ende)}</td><td colspan="2"></td></tr></tbody></table></div>`;
   h+='</section>';
+  h+=R.htmlFord+R.htmlOff;
   // Je Betrieb
   if(bs.length>1){
     const rows=[['KIMOJO'],['PHFIP'],['KIMOJO','PHFIP']].map(b=>({b,p:b.length>1?P:liqPrognose(b)})).filter(x=>x.p);
@@ -874,9 +882,11 @@ function liqVorschau(){
   h+='</section>';
   return h;
 }
-function pLiquiditaet(){return liqVorschau()+liqReserven();}
+function pLiquiditaet(){const bs=liqBetriebe();if(liqPrognose(bs))return liqVorschau();const R=liqReserve();return liqVorschau()+R.htmlFord+R.htmlOff;}
 
-function liqReserven(){
+// Forderungen und unabgerechnete Leistungen; die Vorschau zeigt die Summen oben
+// und die beiden Tabellen direkt unter dem Wochenverlauf.
+function liqReserve(){
   const ents=BANK_ENT.filter(e=>e.sites.some(s=>matchS(s)));
   // Stufe 1: Bank, letzter vorhandener Kontostand
   const bank=ents.map(e=>{const b=D[e.k]||{};const ms=MN.filter(m=>b[m]);const last=ms.length?ms[ms.length-1]:null;return{e,saldo:last?b[last].saldo:0,last,datum:b.voll&&last&&b.voll.monate[last]?b.voll.monate[last].saldoDatum:null};});
@@ -890,29 +900,18 @@ function liqReserven(){
   // Stufe 3: Unabgerechnet
   const off=liqOffen();const offSum=Object.values(off).reduce((t,x)=>t+x.offen,0);
   const total=bankSum+ford+offSum;
-  const pct=v=>total>0?Math.max(0,v)/total*100:0;
-  const sub=`${esc(sn(aS))} · Stichtag heute${bankStand?' · Kontostand vom '+fDatU(bankStand):''}`;
-  let h=`<section class="sec"><div class="sec-h"><h2>Liquiditätsreserve</h2><span class="sub">${sub}</span></div><div class="grid">`;
-  h+=`<div class="kpi big"><div class="l">Reserve gesamt</div><div class="v">${eur0(total)}</div><div class="s">Bank + offene Forderungen + unabgerechnete Leistungen</div></div>`;
-  h+=`<div class="kpi"><div class="l">I · Bankguthaben</div><div class="v c-g">${eur0(bankSum)}</div><div class="s">sofort verfügbar · ${bankStand?'Stand '+fDatU(bankStand):'kein Kontoauszug'}</div></div>`;
-  h+=`<div class="kpi"><div class="l">II · Offene Forderungen</div><div class="v" style="color:var(--blue)">${eur0(ford)}</div><div class="s">${n0(medifoxN+theveaN)} Rechnungen gestellt, noch nicht bezahlt</div></div>`;
-  h+=`<div class="kpi"><div class="l">III · Unabgerechnet</div><div class="v c-a">${eur0(offSum)}</div><div class="s">erbracht, aber noch keine Rechnung</div></div>`;
-  h+='</div>';
-  h+=`<div style="display:flex;height:12px;border-radius:6px;overflow:hidden;margin-top:14px;background:var(--fill)"><div style="width:${pct(bankSum)}%;background:var(--green)"></div><div style="width:${pct(ford)}%;background:var(--blue)"></div><div style="width:${pct(offSum)}%;background:var(--amber)"></div></div>`;
-  h+=`<div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted)"><span><span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green)"></span> Bank ${n0(pct(bankSum))} %</span><span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--blue)"></span> Forderungen ${n0(pct(ford))} %</span><span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--amber)"></span> Unabgerechnet ${n0(pct(offSum))} %</span></div>`;
-  h+='</section>';
-  // I Bank
-  h+=`<section class="sec"><div class="sec-h"><h2>I · Bankguthaben</h2><span class="sub">letzter Kontostand je Konto</span></div><div class="tbl-wrap"><table><thead><tr><th>Konto</th><th class="r">Kontostand</th><th>Stand</th></tr></thead><tbody>${bank.map(x=>`<tr><td><span class="site"><span class="dot" style="background:${x.e.col}"></span>${esc(x.e.l)}</span></td><td class="r"><b>${eur0(x.saldo)}</b></td><td class="c-m">${x.datum?fDatU(x.datum):(x.last?'Ende '+x.last:'kein Export')}</td></tr>`).join('')}<tr class="sum"><td>Summe</td><td class="r">${eur0(bankSum)}</td><td></td></tr></tbody></table></div><p class="hint">Aus den Kontoauszug-Exporten; liegt der Export zurück, ist der Kontostand entsprechend alt.</p></section>`;
+  let h='';
   // II Forderungen
-  h+=`<section class="sec"><div class="sec-h"><h2>II · Offene Forderungen</h2><span class="sub">Medifox-Rechnungsübersicht und thevea-Rechnungen</span></div><div class="tbl-wrap"><table><thead><tr><th>Quelle</th><th>Betrieb</th><th>Art</th><th class="r">Rechnungen</th><th class="r">Offen</th><th style="min-width:110px"></th></tr></thead><tbody>`;
+  h+=`<section class="sec"><div class="sec-h"><h2>Offene Forderungen</h2><span class="sub">Medifox-Rechnungsübersicht und thevea-Rechnungen</span></div><div class="tbl-wrap"><table><thead><tr><th>Quelle</th><th>Betrieb</th><th>Art</th><th class="r">Rechnungen</th><th class="r">Offen</th><th style="min-width:110px"></th></tr></thead><tbody>`;
   const mxF=Math.max(...pts.map(x=>x.saldo),...Object.values(reOffen).map(x=>x.offen),1);
   pts.sort((a,b)=>b.saldo-a.saldo).forEach(x=>{const e=BANK_ENT.find(e=>e.pre===x.prefix);h+=`<tr><td class="c-m">Medifox</td><td><span class="site"><span class="dot" style="background:${e.col}"></span>${esc(e.l)}</span></td><td>${esc(x.typ)}</td><td class="r">${n0(x.count)}</td><td class="r"><b>${eur0(x.saldo)}</b></td><td><div class="bar"><i style="width:${x.saldo/mxF*100}%;background:var(--blue)"></i></div></td></tr>`;});
   Object.entries(reOffen).sort((a,b)=>b[1].offen-a[1].offen).forEach(([art,x])=>{h+=`<tr><td class="c-m">thevea</td><td><span class="site"><span class="dot" style="background:var(--primary)"></span>KIMOJO GmbH</span></td><td>${esc(art)}</td><td class="r">${n0(x.n)}</td><td class="r"><b>${eur0(x.offen)}</b></td><td><div class="bar"><i style="width:${x.offen/mxF*100}%;background:var(--blue)"></i></div></td></tr>`;});
   h+=`<tr class="sum"><td colspan="3">Summe</td><td class="r">${n0(medifoxN+theveaN)}</td><td class="r">${eur0(ford)}</td><td></td></tr></tbody></table></div><p class="hint">Medifox: Rechnungen mit offenem Saldo aus der Rechnungsübersicht (Nummern mit „K-“ gehören zu Kitzingen, ohne Präfix zu KIMOJO vor dem Cutover). thevea: nicht stornierte Rechnungen mit Restbetrag (Betrag minus Zahlungseingang). Kassenabrechnungen über thevea erscheinen hier noch nicht.</p></section>`;
+  const htmlFord=h;h='';
   // III Unabgerechnet
   const offE=Object.entries(off).sort((a,b)=>b[1].offen-a[1].offen);const mxO=Math.max(...offE.map(x=>x[1].offen),1);
-  h+=`<section class="sec"><div class="sec-h"><h2>III · Erbracht, noch nicht abgerechnet</h2><span class="sub">bis heute</span></div><div class="tbl-wrap"><table><thead><tr><th>Standort</th><th class="r">Offen</th><th style="min-width:110px"></th><th>Quelle</th></tr></thead><tbody>${offE.map(([s,x])=>`<tr><td>${siteTag(s)}</td><td class="r"><b>${eur0(x.offen)}</b></td><td><div class="bar"><i style="width:${x.offen/mxO*100}%;background:var(--amber)"></i></div></td><td class="c-m">${esc(x.quelle)}</td></tr>`).join('')}<tr class="sum"><td>Summe</td><td class="r">${eur0(offSum)}</td><td></td><td></td></tr></tbody></table></div><p class="hint">Kitzingen: Leistungen bis heute ohne Kennzeichen „Abgerechnet“ (ohne Club, T-RENA, Kurse, Ausfallrechnungen). KIMOJO: erbrachter Kalenderwert seit dem thevea-Cutover minus der in thevea abgerechneten Verordnungen – Rezepte laufen meist noch, der Wert ist also eine Pipeline, kein Rückstand.</p></section>`;
-  return h;
+  h+=`<section class="sec"><div class="sec-h"><h2>Erbracht, noch nicht abgerechnet</h2><span class="sub">bis heute</span></div><div class="tbl-wrap"><table><thead><tr><th>Standort</th><th class="r">Offen</th><th style="min-width:110px"></th><th>Quelle</th></tr></thead><tbody>${offE.map(([s,x])=>`<tr><td>${siteTag(s)}</td><td class="r"><b>${eur0(x.offen)}</b></td><td><div class="bar"><i style="width:${x.offen/mxO*100}%;background:var(--amber)"></i></div></td><td class="c-m">${esc(x.quelle)}</td></tr>`).join('')}<tr class="sum"><td>Summe</td><td class="r">${eur0(offSum)}</td><td></td><td></td></tr></tbody></table></div><p class="hint">Kitzingen: Leistungen bis heute ohne Kennzeichen „Abgerechnet“ (ohne Club, T-RENA, Kurse, Ausfallrechnungen). KIMOJO: erbrachter Kalenderwert seit dem thevea-Cutover minus der in thevea abgerechneten Verordnungen – Rezepte laufen meist noch, der Wert ist also eine Pipeline, kein Rückstand.</p></section>`;
+  return{bankSum,ford,offSum,total,nRe:medifoxN+theveaN,htmlFord,htmlOff:h};
 }
 
 // ── Jahresvorschau ───────────────────────────────────────────────────────
