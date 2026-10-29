@@ -1067,9 +1067,46 @@ async function kennLadeEine(dir){
     if(!f||!Array.isArray(f.tage))return;
     if(!(f.v>=KENN_V_MIN&&f.v<=KENN_V)){fremdeFassung=f.v;return;}
     stand=Math.max(stand,Number(f.stand)||0);
-    f.tage.forEach(t=>{if(t&&t.ds)proTag[t.ds]=t;});
+    f.tage.forEach(t=>{if(t&&t.ds){proTag[t.ds]=t;
+      Object.values(t.loc||{}).forEach(l=>{if(l){kennNachRegeln(l.heute);kennNachRegeln(l.morgen);}});}});
   });
   return{stand,fremdeFassung,tage:Object.keys(proTag).sort().map(k=>proTag[k])};
+}
+
+// ── Gespeicherte Tage nach den HEUTIGEN Regeln lesen ──────────────────────
+// Der Patientenchecker schreibt jeden Tag mit der Regel, die an diesem Tag
+// galt. Kommt eine Regel dazu (29.10.2026: EAP, FL-Meeting, Büro, Weekly Club,
+// Pause, Orga, Besprechung Leitung sind nicht verfügbar; Überstundenabbau ist
+// keine Arbeitszeit), stünden ältere Tage sonst noch unter „anderweitig
+// genutzt". Umsortiert wird an den Einträgen, die je Tag mit Minuten
+// gespeichert sind (sonDetail, die 14 größten) — dieselben Muster wie im
+// Patientenchecker, in derselben Reihenfolge. Danach werden die Quoten so
+// gebildet wie dort: am Patienten / Arbeitszeit und am Patienten / verplanbar.
+// Je Therapeut gibt es keine Einzelposten; die Tabelle je Therapeut zeigt
+// ältere Tage deshalb weiter nach damaliger Regel.
+const KR_FREI=/(ü|ue|u)ber\s*stunden?\s*(frei|abbau|abbauen)|(ü|ue)[\s.-]*std\.?\s*(frei|abbau)|freizeitausgleich/i;
+const KR_FEST=/\beap\b|\bfl[\s.-]*meeting|b(?:ü|ue|u)ro[\s.-]*zeit|weekly\s*club\s*meeting|pausen?\b|office[\s.-]*zeit|orga[\s.-]*time|(^|[^a-zäöüß])orga([^a-zäöüß]|$)|blogger|theken[\s.-]*meeting|besprechung\s*leitung/i;
+const KR_ORGA=/\bplanung\b|vorbereit|\bmeeting\b|besprech/i;
+const KR_NAME=/inno(?:vation)?[\s.-]*time|\bfl[\s.-]*zeit|interne\s*fobi|einarbeitung|(^|[^a-zäöüß])blocker([^a-zäöüß]|$)/i;
+function kennNachRegeln(h){
+  if(!h||!Array.isArray(h.sonDetail)||h.regelNeu)return;
+  let frei=0,blk=0;const rest=[];
+  h.sonDetail.forEach(e=>{
+    const txt=String(e&&e[0]||''),m=+(e&&e[1])||0;
+    if(KR_FREI.test(txt))frei+=m;
+    else if(KR_FEST.test(txt)||(!KR_ORGA.test(txt)&&KR_NAME.test(txt)))blk+=m;
+    else rest.push(e);
+  });
+  h.regelNeu=true;
+  if(!frei&&!blk)return;
+  h.son=Math.max(0,(h.son||0)-frei-blk);
+  h.blk=(h.blk||0)+blk;
+  h.wm=Math.max(0,(h.wm||0)-frei);
+  h.vm=Math.max(0,(h.vm||0)-frei-blk);
+  h.sonDetail=rest;
+  h.umsortiert={blk,frei};
+  if(h.wm>0)h.ausl=Math.min(100,Math.round((h.pg||0)/h.wm*100));
+  if(h.vm>0)h.auslB=Math.min(100,Math.round((h.pg||0)/h.vm*100));
 }
 
 // Excel liefert Datumswerte als Seriennummer, als ISO-Text oder deutsch
