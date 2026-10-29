@@ -245,7 +245,7 @@ function tvBerechne(loc,hist,voUeb,voDet,prog,ctrl,jahr){
     rows.push({name,maId:p.id,month,week:tvWoche(d),price,billed:true,
       wd:(d.getDay()+6)%7,startMin:d.getHours()*60+d.getMinutes(),durMin:durMin>0?durMin:20,
       dateKey:d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(),filiale:'KIMOJO',standort:loc.standort,
-      src:'thevea',kind,quelle,hm:hm||'—',status:st,datum:d});
+      src:'thevea',kind,quelle,hm:hm||'—',status:st,datum:d,vo:vo&&vo.id!=null?String(vo.id):''});
   });
   return{rows,stat,personen};
 }
@@ -296,6 +296,8 @@ async function tvLaden(){
     abwes[loc.suf]=(await L(TV_DIR+'abwesenheiten_historie_'+loc.suf+'.json'))||(await L(TV_DIR+'abwesenheiten_roh_'+loc.suf+'.json'))||[];
     if(!hist){D.thevea.fehlt.push('termine_historie_'+loc.suf+'.json');continue;}
     const r=tvBerechne(loc,hist,tvVoMap(uebLoc),tvDetMap(det),tvProgMap(progs),D.ctrl,jahr);
+    // offene (noch nicht abgerechnete) Rezepte laut jüngster Verordnungswert-Prognose
+    {const pl=progs.filter(f=>f&&f.prognose).slice(-1)[0];const ns=pl&&pl.prognose.data&&pl.prognose.data.verordnungswertPrognoseStatistik&&pl.prognose.data.verordnungswertPrognoseStatistik.nodes||[];D.thevea.voOffen=D.thevea.voOffen||{};ns.forEach(n=>{if(n&&n.verordnungId!=null)D.thevea.voOffen[String(n.verordnungId)]=n;});if(pl&&pl.stand)D.thevea.voStand=pl.stand;}
     try{const rv=tvBerechne(loc,hist,tvVoMap(uebLoc),tvDetMap(det),tvProgMap(progs),D.ctrl,jahr-1);D.thevea.rowsVJ=(D.thevea.rowsVJ||[]).concat(rv.rows);}catch(e){}
     D.thevea.rows=D.thevea.rows.concat(r.rows);D.thevea.stat[loc.standort]=r.stat;Object.assign(D.thevea.personen,r.personen);
     // thevea-eigene Umsatzstatistik des jeweiligen Monats als Gegenprobe.
