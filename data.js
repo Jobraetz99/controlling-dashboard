@@ -728,6 +728,7 @@ async function loadAll(){
     // Bank
     const [bankK,bankP]=await Promise.all([bankKP,bankPP]);
     D.bankK=bankK||{};D.bankP=bankP||{};
+    try{await bankKontenAufbauen();}catch(e){console.warn('Bankkonten:',e);D.konten=D.konten||[];}
 
     // Therapeuten
     const ctrl=await ctrlP;
@@ -2200,7 +2201,7 @@ async function loadBank(fileId){
     const sheets=await getSheetNames(fileId);
     if(sheets&&sheets.length>0){
       const data=await getSheet(fileId,sheets[0]);
-      if(data&&data.length>1){const m=parseBankXLSX(data);try{Object.defineProperty(m,'voll',{value:bankVoll(data),enumerable:false});}catch(e){console.warn('Bank voll:',e);}return m;}
+      if(data&&data.length>1){const m=parseBankXLSX(data);try{Object.defineProperty(m,'voll',{value:bankVoll(data),enumerable:false});Object.defineProperty(m,'zeilen',{value:data,enumerable:false});}catch(e){console.warn('Bank voll:',e);}return m;}
     }
   }catch(e){console.log('Bank XLSX failed, trying CSV...',e);}
   try{
@@ -2907,28 +2908,91 @@ const BANK_AUS=[
   ['bank','Bankgebühren',(n,bt,vz)=>/abschluss|entgelt|gebühr/i.test(bt+' '+vz)&&!n],
   ['sonst','Lieferanten und Sonstige',()=>true]
 ];
-function bankVoll(rows){
-  const MNB=['','Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
-  const hdr=rows[0]||[];const col=re=>{for(let c=0;c<hdr.length;c++)if(re.test(String(hdr[c]||'').toLowerCase()))return c;return -1;};
-  let cD=col(/buchungstag/),cN=col(/name zahlungsbeteiligter/),cT=col(/buchungstext/),cV=col(/verwendungszweck/),cB=col(/^betrag$/),cS=col(/saldo/),cI=col(/iban auftragskonto/);
+// Buchung je Konto, einheitlich für Excel-Export und Bankabruf:
+// {d:Date (UTC), b:Betrag, n:Name Zahlungsbeteiligter, t:Buchungstext, z:Verwendungszweck,
+//  s:Saldo nach Buchung oder null, iban:eigenes Konto, pIban:Konto des Zahlungsbeteiligten}
+function bankDatum(v){if(v instanceof Date)return v;if(typeof v==='number'&&v>40000)return new Date(Math.round((v-25569)*86400000));const s=String(v||'');let m=s.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);if(m)return new Date(Date.UTC(+m[3],+m[2]-1,+m[1]));m=s.match(/(\d{4})-(\d{2})-(\d{2})/);if(m)return new Date(Date.UTC(+m[1],+m[2]-1,+m[3]));const n=parseFloat(s);if(n>40000)return new Date(Math.round((n-25569)*86400000));return null;}
+function bankZahl(v){if(v==null||v==='')return NaN;if(typeof v==='number')return v;const s=String(v);return parseFloat(/,\d{1,2}$/.test(s)?s.replace(/\./g,'').replace(',','.'):s);}
+function bankTxAusZeilen(rows,ibanVorgabe){
+  rows=rows||[];const hdr=rows[0]||[];const col=re=>{for(let c=0;c<hdr.length;c++)if(re.test(String(hdr[c]||'').toLowerCase()))return c;return -1;};
+  let cD=col(/buchungstag/),cN=col(/name zahlungsbeteiligter/),cT=col(/buchungstext/),cV=col(/verwendungszweck/),cB=col(/^betrag$/),cS=col(/saldo/),cI=col(/iban auftragskonto/),cP=col(/iban zahlungsbeteiligter/);
   if(cD<0)cD=4;if(cN<0)cN=6;if(cT<0)cT=9;if(cV<0)cV=10;if(cB<0)cB=11;if(cS<0)cS=13;
-  const num=v=>{if(v==null||v==='')return NaN;if(typeof v==='number')return v;const s=String(v);return parseFloat(/,\d{1,2}$/.test(s)?s.replace(/\./g,'').replace(',','.'):s);};
-  const datum=v=>{if(typeof v==='number'&&v>40000)return new Date(Math.round((v-25569)*86400000));const s=String(v||'');let m=s.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);if(m)return new Date(Date.UTC(+m[3],+m[2]-1,+m[1]));m=s.match(/(\d{4})-(\d{2})-(\d{2})/);if(m)return new Date(Date.UTC(+m[1],+m[2]-1,+m[3]));const n=parseFloat(s);if(n>40000)return new Date(Math.round((n-25569)*86400000));return null;};
-  const out={monate:{},von:null,bis:null,iban:'',kat:{ein:{},aus:{}},partner:{ein:{},aus:{}}};
-  for(let i=1;i<rows.length;i++){
-    const r=rows[i];if(!r)continue;const d=datum(r[cD]);if(!d)continue;const b=num(r[cB]);if(isNaN(b))continue;if(d.getUTCFullYear()!==cockpitJahr())continue;
-    if(d.getUTCFullYear()!==cockpitJahr())continue;
-    if(!out.iban&&r[cI])out.iban=String(r[cI]);
-    if(!out.von||d<out.von)out.von=d;if(!out.bis||d>out.bis)out.bis=d;
-    const mn=MNB[d.getUTCMonth()+1],jahr=d.getUTCFullYear();
-    const m=out.monate[mn]||(out.monate[mn]={jahr,ein:0,aus:0,saldo:null,saldoDatum:null,kat:{ein:{},aus:{}}});
-    const n=String(r[cN]||'').trim(),bt=String(r[cT]||'').trim(),vz=String(r[cV]||'').trim();
-    let k;if(b>0){k=(BANK_EIN.find(x=>x[2].test(n))||BANK_EIN[BANK_EIN.length-1])[0];m.ein+=b;}else{k=(BANK_AUS.find(x=>x[2](n,bt,vz))||BANK_AUS[BANK_AUS.length-1])[0];m.aus+=b;}
-    const side=b>0?'ein':'aus';m.kat[side][k]=(m.kat[side][k]||0)+b;out.kat[side][k]=(out.kat[side][k]||0)+b;
-    const pn=n||(/sammel/i.test(bt)?'Sammelüberweisung (Gehälter)':bt||'ohne Namen');out.partner[side][pn]=(out.partner[side][pn]||0)+b;
-    const s=num(r[cS]);if(!isNaN(s)&&(!m.saldoDatum||d>=m.saldoDatum)){m.saldo=s;m.saldoDatum=d;}
-  }
+  const out=[];
+  for(let i=1;i<rows.length;i++){const r=rows[i];if(!r)continue;const d=bankDatum(r[cD]);if(!d)continue;const b=bankZahl(r[cB]);if(isNaN(b))continue;const s=bankZahl(r[cS]);
+    out.push({d,b,n:String(r[cN]||'').trim(),t:String(r[cT]||'').trim(),z:String(r[cV]||'').trim(),s:isNaN(s)?null:s,iban:String((cI>=0&&r[cI])||ibanVorgabe||'').replace(/\s/g,''),pIban:String((cP>=0&&r[cP])||'').replace(/\s/g,''),q:'export'});}
   return out;
+}
+function bankKat(x){return x.b>0?(BANK_EIN.find(k=>k[2].test(x.n))||BANK_EIN[BANK_EIN.length-1])[0]:(BANK_AUS.find(k=>k[2](x.n,x.t,x.z))||BANK_AUS[BANK_AUS.length-1])[0];}
+// Monatswerte des Cockpit-Jahres aus den Buchungen eines oder mehrerer Konten.
+// Kontostand je Monat = Summe der Konten am letzten Buchungstag bis Monatsende.
+function bankVollTx(txs){
+  const MNB=['','Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'],J=cockpitJahr();
+  const out={monate:{},von:null,bis:null,iban:'',kat:{ein:{},aus:{}},partner:{ein:{},aus:{}}};
+  const ibans=[...new Set(txs.map(x=>x.iban))];out.iban=ibans.length===1?ibans[0]:'';out.konten=ibans.length;
+  for(const x of txs){
+    const d=x.d;if(d.getUTCFullYear()!==J)continue;
+    if(!out.von||d<out.von)out.von=d;if(!out.bis||d>out.bis)out.bis=d;
+    const mn=MNB[d.getUTCMonth()+1];
+    const m=out.monate[mn]||(out.monate[mn]={jahr:J,ein:0,aus:0,saldo:null,saldoDatum:null,kat:{ein:{},aus:{}}});
+    const k=bankKat(x),side=x.b>0?'ein':'aus';if(x.b>0)m.ein+=x.b;else m.aus+=x.b;
+    m.kat[side][k]=(m.kat[side][k]||0)+x.b;out.kat[side][k]=(out.kat[side][k]||0)+x.b;
+    const pn=x.n||(/sammel/i.test(x.t)?'Sammelüberweisung (Gehälter)':x.t||'ohne Namen');out.partner[side][pn]=(out.partner[side][pn]||0)+x.b;
+  }
+  // Salden je Konto zum Monatsende
+  const proKonto={};txs.filter(x=>x.s!=null).forEach(x=>(proKonto[x.iban]=proKonto[x.iban]||[]).push(x));
+  Object.values(proKonto).forEach(l=>l.sort((a,b)=>a.d-b.d));
+  Object.keys(out.monate).forEach(mn=>{const mi=MNB.indexOf(mn),ende=new Date(Date.UTC(J,mi,1));let s=null,sd=null;
+    Object.values(proKonto).forEach(l=>{let last=null;for(const x of l){if(x.d<ende)last=x;else break;}if(last){s=(s||0)+last.s;if(!sd||last.d>sd)sd=last.d;}});
+    out.monate[mn].saldo=s;out.monate[mn].saldoDatum=sd;});
+  return out;
+}
+function bankVoll(rows){return bankVollTx(bankTxAusZeilen(rows));}
+function bankMonate(v){const m={};Object.entries(v.monate).forEach(([k,x])=>{m[k]={ein:x.ein,aus:x.aus,saldo:x.saldo==null?0:x.saldo};});try{Object.defineProperty(m,'voll',{value:v,enumerable:false});}catch(e){}return m;}
+
+// ═══ BANKABRUF (Enable Banking, PSD2) ═══════════════════════════════════════
+// Das Skript „Controlling Dashbaord/bankabruf/bank_abruf.py“ läuft auf dem Mac
+// dreimal täglich und schreibt nach Controlling/Bank/: konten.json (Salden,
+// Kreditlinie, Gültigkeit der Freigabe) und umsaetze_<IBAN>_<JJJJ-MM>.json.
+// Die Excel-Exporte (KIMOJO Bank.xlsx, PHFIP Bank.xlsx) füllen die Zeit vor dem
+// ersten Abruf je Konto.
+const BANK_ORDNER='/12_Code/Controlling/Bank/';
+const BANK_IBAN_BETRIEB={'5407389':'KIMOJO','5819601':'PHFIP'};
+const BETRIEB_KEY={KIMOJO:'bankK',PHFIP:'bankP'};
+function bankBetrieb(iban,inhaber,fest){
+  if(fest)return fest;const e=Object.keys(BANK_IBAN_BETRIEB).find(k=>String(iban||'').endsWith(k));if(e)return BANK_IBAN_BETRIEB[e];
+  const n=String(inhaber||'').toLowerCase();if(/kimojo/.test(n))return'KIMOJO';if(/im park|phfip|physio und fitness/.test(n))return'PHFIP';return'';
+}
+async function bankOrdnerLaden(){
+  let kinder=[];try{kinder=await graphKinder(BANK_ORDNER);}catch(e){return{meta:null,tx:{}};}
+  const namen=(kinder||[]).map(k=>k.name||'');
+  const meta=namen.includes('konten.json')?await loadJSONPfad(BANK_ORDNER+'konten.json').catch(()=>null):null;
+  const um=namen.filter(n=>/^umsaetze_[A-Z0-9]+_\d{4}-\d{2}\.json$/.test(n));
+  const files=await Promise.all(um.map(n=>loadJSONPfad(BANK_ORDNER+n).catch(()=>null)));
+  const tx={};
+  files.forEach(f=>{if(!f||!f.iban)return;const l=tx[f.iban]||(tx[f.iban]=[]);(f.buchungen||[]).forEach(b=>{const d=bankDatum(b.datum);if(!d||typeof b.betrag!=='number')return;l.push({d,b:b.betrag,n:b.name||'',t:b.text||'',z:b.zweck||'',s:b.saldo==null?null:b.saldo,iban:f.iban,pIban:b.iban_partner||'',q:'abruf',id:b.id});});});
+  return{meta,tx};
+}
+async function bankKontenAufbauen(){
+  const ord=await bankOrdnerLaden();const meta=(ord.meta&&ord.meta.konten)||[];
+  const K={};
+  const konto=(iban,betrieb)=>K[iban]||(K[iban]={iban,betrieb,name:'',bank:'',tx:[],saldo:null,saldoDatum:null,kreditlinie:null,verfuegbar:null,gueltigBis:null,fehler:'',abruf:null,quelle:''});
+  // 1. Bankabruf
+  meta.forEach(m=>{const k=konto(m.iban,bankBetrieb(m.iban,m.inhaber,m.betrieb));Object.assign(k,{name:m.name||m.produkt||'',bank:m.bank||'',inhaber:m.inhaber||'',saldo:m.saldo==null?null:m.saldo,saldoDatum:bankDatum(m.saldo_datum),kreditlinie:m.kreditlinie==null?null:m.kreditlinie,verfuegbar:m.verfuegbar==null?null:m.verfuegbar,gueltigBis:m.gueltig_bis?new Date(m.gueltig_bis):null,fehler:m.fehler||'',abruf:m.abruf?new Date(m.abruf):null,quelle:'Bankabruf'});});
+  Object.entries(ord.tx).forEach(([iban,l])=>{const k=konto(iban,bankBetrieb(iban));k.tx=l;if(!k.quelle)k.quelle='Bankabruf';});
+  // 2. Excel-Exporte: nur Buchungen vor dem ersten abgerufenen Tag des Kontos
+  for(const [b,key] of Object.entries(BETRIEB_KEY)){
+    const rows=D[key]&&D[key].zeilen;if(!rows)continue;
+    bankTxAusZeilen(rows).forEach(x=>{const iban=x.iban||('EXPORT-'+b);const k=K[iban]||konto(iban,bankBetrieb(iban)||b);if(!k.ersterAbruf)k.ersterAbruf=k.tx.filter(y=>y.q==='abruf').reduce((m,y)=>!m||y.d<m?y.d:m,null)||new Date(8.64e15);if(x.d<k.ersterAbruf){(k.exp=k.exp||[]).push(x);}});
+  }
+  Object.values(K).forEach(k=>{
+    if(k.exp){k.tx=k.exp.concat(k.tx);if(!k.quelle)k.quelle='Export';else k.quelle+=' + Export';if(!k.name)k.name=(D[BETRIEB_KEY[k.betrieb]]&&D[BETRIEB_KEY[k.betrieb]].zeilen&&D[BETRIEB_KEY[k.betrieb]].zeilen[1]&&D[BETRIEB_KEY[k.betrieb]].zeilen[1][0])||'Girokonto';if(!k.bank){const z=D[BETRIEB_KEY[k.betrieb]]&&D[BETRIEB_KEY[k.betrieb]].zeilen;k.bank=(z&&z[1]&&z[1][3])||'';}}
+    delete k.exp;delete k.ersterAbruf;k.tx.sort((a,b)=>a.d-b.d);
+    if(k.saldo==null){const l=k.tx.filter(x=>x.s!=null);const x=l[l.length-1];if(x){k.saldo=x.s;k.saldoDatum=x.d;}}
+  });
+  D.konten=Object.values(K).filter(k=>k.tx.length||k.saldo!=null);
+  D.bankAbruf=ord.meta?{stand:ord.meta.stand?new Date(ord.meta.stand):null,quelle:ord.meta.quelle||''}:null;
+  // Monatswerte je Betrieb für Cashflow (gleiche Form wie bisher)
+  for(const [b,key] of Object.entries(BETRIEB_KEY)){const tx=D.konten.filter(k=>k.betrieb===b).flatMap(k=>k.tx);if(tx.length)D[key]=bankMonate(bankVollTx(tx));}
 }
 // Medifox-Rechnungsübersicht (Abrechnung → Rechnungsübersicht → Export):
 // Rechnungsnummern mit „K-“ gehören zu Kitzingen (PF im Park), Nummern ohne

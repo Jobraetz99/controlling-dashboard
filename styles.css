@@ -165,3 +165,4 @@ tr.today td{background:var(--blue-bg)}
 @media(max-width:640px){#praxisBody .hero{grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px}#praxisBody .hk{padding:13px 14px}#praxisBody .hk-v{font-size:21px}#praxisBody .hk-l{font-size:11px}#praxisBody #theraKpis .hk-v{font-size:19px!important}#praxisBody .flt{gap:5px;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;padding-bottom:4px}#praxisBody .flt::-webkit-scrollbar{display:none}#praxisBody .fb, #praxisBody .fl, #praxisBody .sep{flex-shrink:0}#praxisBody .st{font-size:14px;margin:20px 0 10px}#praxisBody .tc, #praxisBody .cd{padding:14px 15px}}
 @media(max-width:400px){#praxisBody .hero{grid-template-columns:1fr!important}}
 #praxisBody{font-family:var(--font);color:var(--dark)}
+.note{margin-top:10px;padding:10px 14px;border-radius:10px;background:var(--amber-bg);color:var(--amber);font-size:13px;line-height:1.45}.note.r{background:var(--red-bg);color:var(--red)}

@@ -643,7 +643,7 @@ function linienChart(labels,series){
   for(let i=0;i<=4;i++){const v=mn+(mx-mn)*i/4,yy=y(v);h+=`<line x1="${pd.l}" x2="${W-pd.r}" y1="${yy}" y2="${yy}" stroke="var(--border)" stroke-width="1"/><text x="${pd.l-6}" y="${yy+4}" text-anchor="end" font-size="10" fill="var(--faint)">${fmK(v)}</text>`;}
   if(mn<0)h+=`<line x1="${pd.l}" x2="${W-pd.r}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-width="1"/>`;
   labels.forEach((l,i)=>{h+=`<text x="${x(i)}" y="${H-6}" text-anchor="middle" font-size="10" fill="var(--muted)">${esc(l)}</text>`;});
-  series.forEach(s=>{const pts=s.vals.map((v,i)=>v==null?null:[x(i),y(v)]).filter(Boolean);if(pts.length<2)return;h+=`<polyline points="${pts.map(p=>p.join(',')).join(' ')}" fill="none" stroke="${s.col}" stroke-width="2.5" stroke-linejoin="round"/>`;pts.forEach(p=>{h+=`<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="${s.col}"/>`;});});
+  series.forEach(s=>{const pts=s.vals.map((v,i)=>v==null?null:[x(i),y(v)]).filter(Boolean);if(pts.length<2)return;h+=`<polyline points="${pts.map(p=>p.join(',')).join(' ')}" fill="none" stroke="${s.col}" stroke-width="${s.dash?1.5:2.5}"${s.dash?' stroke-dasharray="6 4"':''} stroke-linejoin="round"/>`;if(!s.dash)pts.forEach(p=>{h+=`<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="${s.col}"/>`;});});
   return h+'</svg>';
 }
 function pCashflow(){
@@ -663,17 +663,17 @@ function pCashflow(){
   // Saldo-Verlauf
   const lab=months.filter(m=>data.some(x=>x.b[m]));
   if(lab.length>1)h+='<div style="margin-top:14px">'+linienChart(lab,data.map(x=>({col:x.e.col,vals:lab.map(m=>x.b[m]?x.b[m].saldo:null)})))+'</div><p class="hint">Kontostand am letzten Buchungstag des Monats je Konto.</p>';
-  h+=`<p class="hint">Quelle: Kontoauszug-Exporte der VR-Bank (KIMOJO Bank.xlsx, PHFIP Bank.xlsx), manuell abgelegt – der Stand entspricht dem letzten Buchungstag im Export. Einzahlungen und Auszahlungen sind nach Zahlungsbeteiligtem und Verwendungszweck zugeordnet; interne Umbuchungen zwischen den Konten und Gesellschaftern stehen gesondert.</p></section>`;
+  h+=`<p class="hint">Quelle: ${D.bankAbruf?'automatischer Bankabruf (Enable Banking, dreimal täglich), für die Zeit davor die Kontoauszug-Exporte der VR-Bank.':'Kontoauszug-Exporte der VR-Bank (KIMOJO Bank.xlsx, PHFIP Bank.xlsx), manuell abgelegt – der Stand entspricht dem letzten Buchungstag im Export.'} Einzahlungen und Auszahlungen sind nach Zahlungsbeteiligtem und Verwendungszweck zugeordnet; interne Umbuchungen zwischen den Konten und Gesellschaftern stehen gesondert.</p></section>`;
   data.forEach(x=>{
     if(!x.ms.length)return;
-    h+=`<section class="sec"><div class="sec-h"><h2><span class="site"><span class="dot" style="background:${x.e.col}"></span>${esc(x.e.l)}</span></h2><span class="sub">${x.v&&x.v.iban?'IBAN …'+esc(String(x.v.iban).slice(-6))+' · ':''}${x.ms.length} Monat${x.ms.length>1?'e':''}</span></div>`;
+    h+=`<section class="sec"><div class="sec-h"><h2><span class="site"><span class="dot" style="background:${x.e.col}"></span>${esc(x.e.l)}</span></h2><span class="sub">${x.v&&x.v.iban?'IBAN …'+esc(String(x.v.iban).slice(-6))+' · ':x.v&&x.v.konten>1?x.v.konten+' Konten · ':''}${x.ms.length} Monat${x.ms.length>1?'e':''}</span></div>`;
     h+='<div class="tbl-wrap"><table><thead><tr><th>Monat</th><th class="r">Einzahlungen</th><th class="r">Auszahlungen</th><th class="r">Netto</th><th class="r">Kontostand Ende</th></tr></thead><tbody>';
     x.ms.forEach(m=>{const d=x.b[m];h+=`<tr><td>${m}</td><td class="r c-g">${eur0(d.ein)}</td><td class="r c-r">${eur0(d.aus)}</td><td class="r ${d.ein+d.aus>=0?'c-g':'c-r'}"><b>${eur0(d.ein+d.aus)}</b></td><td class="r">${eur0(d.saldo)}</td></tr>`;});
     h+=`<tr class="sum"><td>Summe</td><td class="r c-g">${eur0(x.agg.ein)}</td><td class="r c-r">${eur0(x.agg.aus)}</td><td class="r ${x.agg.ein+x.agg.aus>=0?'c-g':'c-r'}">${eur0(x.agg.ein+x.agg.aus)}</td><td class="r">${x.saldo==null?'—':eur0(x.saldo)}</td></tr></tbody></table></div>`;
     if(x.v){
       const tab=(side,title,col)=>{const ent=Object.entries(x.agg.kat[side]).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));const tot=ent.reduce((t,e)=>t+e[1],0);const mx=Math.max(...ent.map(e=>Math.abs(e[1])),1);return`<div><div class="sec-h" style="margin:14px 0 8px"><h2 style="font-size:14px">${title}</h2></div><div class="tbl-wrap"><table style="min-width:0"><tbody>${ent.map(([k,v])=>`<tr><td>${esc(katName(side,k))}</td><td class="r"><b>${eur0(v)}</b></td><td class="r c-m">${tot?n0(v/tot*100)+' %':''}</td><td style="min-width:90px"><div class="bar"><i style="width:${Math.abs(v)/mx*100}%;background:${col}"></i></div></td></tr>`).join('')}</tbody></table></div></div>`;};
       h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">'+tab('ein','Woher kommt das Geld','var(--green)')+tab('aus','Wohin geht das Geld','var(--red)')+'</div>';
-      const top=(side,title)=>{const ent=Object.entries(x.v.partner[side]).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).slice(0,8);return`<div><div class="sec-h" style="margin:14px 0 8px"><h2 style="font-size:14px">${title}</h2><span class="sub">gesamter Export ${fDatU(x.v.von)} – ${fDatU(x.v.bis)}</span></div><div class="tbl-wrap"><table style="min-width:0"><tbody>${ent.map(([n,v])=>`<tr><td>${esc(n)}</td><td class="r"><b>${eur0(v)}</b></td></tr>`).join('')}</tbody></table></div></div>`;};
+      const top=(side,title)=>{const ent=Object.entries(x.v.partner[side]).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).slice(0,8);return`<div><div class="sec-h" style="margin:14px 0 8px"><h2 style="font-size:14px">${title}</h2><span class="sub">alle Buchungen ${fDatU(x.v.von)} – ${fDatU(x.v.bis)}</span></div><div class="tbl-wrap"><table style="min-width:0"><tbody>${ent.map(([n,v])=>`<tr><td>${esc(n)}</td><td class="r"><b>${eur0(v)}</b></td></tr>`).join('')}</tbody></table></div></div>`;};
       h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">'+top('ein','Größte Zahler')+top('aus','Größte Empfänger')+'</div>';
     }
     h+='</section>';
@@ -700,7 +700,176 @@ function liqOffen(){
   Object.keys(erb).forEach(s=>{const abg=((D.abg&&D.abg.rows)||[]).filter(r=>r.standort===s).reduce((t,r)=>t+r.brutto,0);const o=out[s]||(out[s]={offen:0,n:0,quelle:''});o.offen+=Math.max(0,erb[s]-abg);o.quelle=(o.quelle?o.quelle+' · ':'')+'thevea: Kalenderwert seit Cutover minus Abrechnung';});
   return out;
 }
-function pLiquiditaet(){
+// ── Liquiditätsvorschau (13 Wochen) ──────────────────────────────────────
+// Start: Kontostand aller Konten des Betriebs (Bankabruf, sonst letzter Export).
+// Vorschau nur aus der Bankhistorie der letzten sechs Monate:
+//  · wiederkehrend: gleicher Zahlungsbeteiligter in festem Rhythmus (monatlich,
+//    zwei- oder dreimonatlich) → nächste Termine mit dem Median der letzten drei Beträge
+//  · laufend: Zahler mit mehreren Buchungen je Monat (z. B. Abrechnungszentren)
+//    → Summe der letzten 13 Wochen gleichmäßig auf die Werktage
+//  · übrige Buchungen → Durchschnitt je Kategorie der letzten 13 Wochen;
+//    große Einzelbeträge (Einmaleffekte) werden nicht fortgeschrieben.
+// Umbuchungen zwischen eigenen Konten (und in der Gesamtsicht zwischen KIMOJO
+// und PF im Park) fallen heraus. Mindestbestand = ein Monat Fixkosten (BWA:
+// Gesamtkosten ohne Abschreibungen, Durchschnitt der letzten drei Monate).
+const LIQ_WOCHEN=13,LIQ_TAG=864e5;
+const liqTag=d=>new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()));
+const liqHeute=()=>{const d=new Date();return new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));};
+const liqMontag=d=>{const x=liqTag(d);x.setUTCDate(x.getUTCDate()-((x.getUTCDay()+6)%7));return x;};
+const liqPlus=(d,n)=>{const x=new Date(d);x.setUTCDate(x.getUTCDate()+n);return x;};
+const liqMI=d=>d.getUTCFullYear()*12+d.getUTCMonth();
+const liqMedian=a=>{const s=[...a].sort((x,y)=>x-y),n=s.length;return n?(n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2):0;};
+const liqWerktag=d=>d.getUTCDay()!==0&&d.getUTCDay()!==6;
+const liqKW=d=>{const t=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()));t.setUTCDate(t.getUTCDate()+4-(t.getUTCDay()||7));const y=new Date(Date.UTC(t.getUTCFullYear(),0,1));return Math.ceil(((t-y)/LIQ_TAG+1)/7);};
+const fDM=d=>String(d.getUTCDate()).padStart(2,'0')+'.'+String(d.getUTCMonth()+1).padStart(2,'0')+'.';
+const LIQ_BETRIEB={KIMOJO:{l:'KIMOJO GmbH',col:'var(--primary)'},PHFIP:{l:'PF im Park',col:'var(--teal)'}};
+const LIQ_FREMD={KIMOJO:/physio und fitness|im park|phfip/i,PHFIP:/kimojo/i};
+function liqBetriebe(){return aS==='Alle'?['KIMOJO','PHFIP']:aS==='PF im Park'?['PHFIP']:['KIMOJO'];}
+function liqKey(x){
+  if(x.b<0&&!x.n&&/sammel/i.test(x.t))return'-sammel';
+  const n=String(x.n||x.t||'').toLowerCase().replace(/[^a-zäöüß ]/g,' ').replace(/\b(gmbh|eg|ag|kg|ev|mbh|und|co|se|ug)\b/g,' ').replace(/\s+/g,' ').trim().split(' ').slice(0,3).join(' ');
+  return(x.b>0?'+':'-')+(n||'?');
+}
+function liqIntern(x,betriebe,eigene){
+  if(x.pIban&&eigene.has(x.pIban))return true;
+  return betriebe.length>1&&LIQ_FREMD[x._b]&&LIQ_FREMD[x._b].test(x.n);
+}
+function liqFixkosten(betriebe,H){
+  const det=[];let wert=0;
+  betriebe.forEach(b=>{const bwa=D[b==='KIMOJO'?'bwaK':'bwaP']||{};
+    const ms=MN.filter(m=>{const x=getBWA(bwa,m);return x&&x.voll&&x.voll.z&&x.voll.z['1294']&&x.voll.z['1294'].ist;}).slice(-3);
+    if(!ms.length)return;const v=ms.map(m=>{const z=getBWA(bwa,m).voll.z;return(z['1294'].ist||0)-((z['1248']&&z['1248'].ist)||0);});
+    const avg=v.reduce((t,x)=>t+x,0)/v.length;wert+=avg;det.push({b,ms,avg});});
+  if(!det.length&&H){// ohne BWA: durchschnittliche Auszahlungen je Monat laut Bank
+    const aus=-H.filter(x=>x.b<0).reduce((t,x)=>t+x.b,0)/3;return{wert:aus,det:[],quelle:'Auszahlungen ø Monat (Bank, 13 Wochen)'};}
+  return{wert,det,quelle:'BWA: Gesamtkosten ohne Abschreibungen, ø '+(det[0]?det[0].ms.join(', '):'')};
+}
+function liqPrognose(betriebe){
+  const konten=(D.konten||[]).filter(k=>betriebe.includes(k.betrieb)&&k.saldoDatum);
+  if(!konten.length)return null;
+  const eigene=new Set(konten.map(k=>k.iban));
+  const stand=liqTag(konten.reduce((m,k)=>!m||k.saldoDatum>m?k.saldoDatum:m,null));
+  const start=konten.reduce((t,k)=>t+(k.saldo||0),0),kredit=konten.reduce((t,k)=>t+(k.kreditlinie||0),0);
+  const von91=liqPlus(stand,-91),von183=liqPlus(stand,-183);
+  const H=konten.flatMap(k=>k.tx.filter(x=>x.d>von183&&x.d<=stand).map(x=>Object.assign({_b:k.betrieb},x))).filter(x=>!liqIntern(x,betriebe,eigene));
+  const H91=H.filter(x=>x.d>von91);
+  const w0=liqMontag(stand),wochen=[...Array(LIQ_WOCHEN)].map((_,i)=>({von:liqPlus(w0,7*i),bis:liqPlus(w0,7*i+6),ein:0,aus:0,kat:{ein:{},aus:{}}}));
+  const ende=wochen[LIQ_WOCHEN-1].bis,met={},termine=[],einmal=[];
+  const buche=(d,betrag,kat,art)=>{if(d<=stand||d>ende||!betrag)return;const w=wochen[Math.floor((d-w0)/LIQ_TAG/7)];if(!w)return;const sd=betrag>0?'ein':'aus';w[sd]+=betrag;w.kat[sd][kat]=(w.kat[sd][kat]||0)+betrag;const m=met[sd+'|'+kat]||(met[sd+'|'+kat]={sd,kat,summe:0,art:{}});m.summe+=betrag;m.art[art]=(m.art[art]||0)+betrag;};
+  const werktageVor=[...Array(91)].map((_,i)=>liqPlus(stand,-i)).filter(liqWerktag).length||65;
+  const kuenftigeWerktage=[];for(let d=liqPlus(stand,1);d<=ende;d=liqPlus(d,1))if(liqWerktag(d))kuenftigeWerktage.push(d);
+  const ausMonat=-H91.filter(x=>x.b<0).reduce((t,x)=>t+x.b,0)/3,grenze=Math.max(5000,Math.round(ausMonat*0.1/1000)*1000);
+  const rest={};
+  const G={};H.forEach(x=>{const k=liqKey(x);(G[k]=G[k]||[]).push(x);});
+  Object.values(G).forEach(l=>{
+    l.sort((a,b)=>a.d-b.d);const last=l[l.length-1],kat=bankKat(last);
+    const name=last.n||(/sammel/i.test(last.t)?'Sammelüberweisung (Gehälter)':last.t)||'ohne Namen';
+    const mon=[...new Set(l.map(x=>liqMI(x.d)))].sort((a,b)=>a-b),dm=mon.length,cnt=l.length;
+    // Umbuchungen, Einlagen und Steuererstattungen werden nicht fortgeschrieben;
+    // Zahlungen an Gesellschafter nur, wenn sie in festem Rhythmus kommen.
+    const person=kat==='intern'&&last.b<0&&/br[äa]tz/i.test(name);
+    const nieFort=x=>{einmal.push(Object.assign({kat:bankKat(x),grund:kat==='intern'?'Umbuchung, Gesellschafter':'Erstattung'},x));};
+    if((kat==='intern'&&!person)||(kat==='finanzamt'&&last.b>0)){l.filter(x=>x.d>von91).forEach(nieFort);return;}
+    // laufend: mehrere Buchungen je Monat
+    if(cnt>=4&&cnt/dm>1.34&&!person){
+      if((stand-last.d)/LIQ_TAG>35)return;
+      const s=l.filter(x=>x.d>von91).reduce((t,x)=>t+x.b,0)/werktageVor;
+      kuenftigeWerktage.forEach(d=>buche(d,s,kat,'laufend'));return;
+    }
+    // wiederkehrend in festem Rhythmus
+    if(dm>=2){
+      const gaps=[];for(let i=1;i<dm;i++)gaps.push(mon[i]-mon[i-1]);
+      const g=Math.round(liqMedian(gaps));
+      if(((g===1&&dm>=3)||((g===2||g===3)&&dm>=2))&&gaps.filter(x=>x===g).length>=Math.ceil(gaps.length*0.6)){
+        if(liqMI(stand)-liqMI(last.d)>g+1)return;// beendet
+        const l3=l.slice(-3),betr=liqMedian(l3.map(x=>x.b)),tag=Math.round(liqMedian(l3.map(x=>x.d.getUTCDate())));
+        for(let mi=liqMI(last.d)+g;;mi+=g){
+          const y=Math.floor(mi/12),mo=mi%12,ml=new Date(Date.UTC(y,mo+1,0)).getUTCDate();let d=new Date(Date.UTC(y,mo,Math.min(tag,ml)));
+          if(d>ende)break;
+          if(d<=stand){if((stand-d)/LIQ_TAG>10)continue;d=liqPlus(stand,1);}
+          while(!liqWerktag(d))d=liqPlus(d,1);
+          buche(d,betr,kat,'wiederkehrend');if(d<=ende)termine.push({d,b:betr,kat,name,g,n:cnt});
+        }
+        return;
+      }
+    }
+    // übrige: Durchschnitt je Kategorie, Einmaleffekte ausgenommen
+    l.filter(x=>x.d>von91).forEach(x=>{if(person){nieFort(x);return;}if(Math.abs(x.b)>=grenze){einmal.push(Object.assign({kat,grund:'Einzelbetrag ab '+eur0(grenze)},x));return;}const k=(x.b>0?'ein':'aus')+'|'+kat;rest[k]=(rest[k]||0)+x.b;});
+  });
+  Object.entries(rest).forEach(([k,s])=>{const kat=k.split('|')[1],t=s/werktageVor;kuenftigeWerktage.forEach(d=>buche(d,t,kat,'Durchschnitt'));});
+  let lauf=start;wochen.forEach(w=>{w.anfang=lauf;lauf+=w.ein+w.aus;w.ende=lauf;});
+  const tief=wochen.reduce((m,w)=>!m||w.ende<m.ende?w:m,null);
+  const fix=liqFixkosten(betriebe,H91);
+  return{betriebe,konten,stand,start,kredit,wochen,tief,fix,termine:termine.sort((a,b)=>a.d-b.d),met:Object.values(met),einmal:einmal.sort((a,b)=>Math.abs(b.b)-Math.abs(a.b)),grenze,alter:Math.round((liqHeute()-stand)/LIQ_TAG)};
+}
+const liqStatus=(v,fix)=>v<0?'<span class="pill p-r">Unterdeckung</span>':v<fix?'<span class="pill p-a">unter Mindestbestand</span>':'<span class="pill p-g">ausreichend</span>';
+const liqName=bs=>bs.length>1?'BM Group':LIQ_BETRIEB[bs[0]].l;
+const LIQ_ART={wiederkehrend:'feste Termine',laufend:'laufend je Werktag',Durchschnitt:'ø der letzten 13 Wochen'};
+function liqVorschau(){
+  const bs=liqBetriebe(),P=liqPrognose(bs);
+  if(!P)return`<section class="sec"><div class="sec-h"><h2>Liquiditätsvorschau</h2></div><div class="empty">Für ${esc(liqName(bs))} liegen noch keine Kontodaten vor.</div></section>`;
+  const fix=P.fix.wert,w=P.wochen,kwL=x=>'KW '+liqKW(x.von);
+  let h='';
+  // Hinweise zu Aktualität und Freigabe
+  const notes=[];
+  if(P.alter>3)notes.push(['r',`Kontostand vom ${fDatU(P.stand)} (vor ${n0(P.alter)} Tagen). ${D.bankAbruf?'Der Bankabruf hat seitdem nichts geliefert, bitte das Protokoll prüfen.':'Der automatische Bankabruf ist noch nicht eingerichtet, die Vorschau beginnt deshalb beim letzten Export.'}`]);
+  else P.konten.forEach(k=>{const t=Math.round((P.stand-liqTag(k.saldoDatum))/LIQ_TAG);if(t>3)notes.push(['a',`${esc(k.name||'Konto')} …${esc(k.iban.slice(-6))}: Kontostand vom ${fDatU(k.saldoDatum)} (${esc(k.quelle)}), älter als die übrigen Konten.`]);});
+  P.konten.forEach(k=>{if(k.fehler)notes.push(['r',`${esc(k.name||'Konto')} …${esc(k.iban.slice(-6))}: ${esc(k.fehler)}.`]);else if(k.gueltigBis){const t=Math.round((k.gueltigBis-new Date())/LIQ_TAG);if(t<=14)notes.push(['a',`Die Bankfreigabe für ${esc(k.name||'Konto')} …${esc(k.iban.slice(-6))} endet ${t<0?'ist abgelaufen':'in '+n0(t)+' Tagen'} (${fDatU(k.gueltigBis)}). Im Terminal erneuern: python3 bank_abruf.py verbinden`]);}});
+  const sub=`${esc(liqName(bs))} · Start ${fDatU(P.stand)} · ${LIQ_WOCHEN} Wochen bis ${fDatU(w[LIQ_WOCHEN-1].bis)}`;
+  h+=`<section class="sec"><div class="sec-h"><h2>Liquiditätsvorschau</h2><span class="sub">${sub}</span></div>`;
+  notes.forEach(([c,t])=>{h+=`<div class="note${c==='r'?' r':''}">${t}</div>`;});
+  h+='<div class="grid" style="margin-top:12px">';
+  h+=`<div class="kpi big"><div class="l">Kontostand</div><div class="v">${eur0(P.start)}</div><div class="s">${P.konten.length>1?P.konten.length+' Konten':'1 Konto'} · Stand ${fDatU(P.stand)}${P.kredit?` · mit Kreditlinie <b>${eur0(P.start+P.kredit)}</b>`:''}</div></div>`;
+  h+=`<div class="kpi"><div class="l">Tiefster Stand · ${kwL(P.tief)}</div><div class="v ${P.tief.ende<0?'c-r':P.tief.ende<fix?'c-a':'c-g'}">${eur0(P.tief.ende)}</div><div class="s">${liqStatus(P.tief.ende,fix)} Woche ${fDatU(P.tief.von)} – ${fDatU(P.tief.bis)}</div></div>`;
+  h+=`<div class="kpi"><div class="l">In ${LIQ_WOCHEN} Wochen</div><div class="v ${w[LIQ_WOCHEN-1].ende>=P.start?'c-g':'c-r'}">${eur0(w[LIQ_WOCHEN-1].ende)}</div><div class="s">${w[LIQ_WOCHEN-1].ende-P.start>=0?'+':''}${eur0(w[LIQ_WOCHEN-1].ende-P.start)} gegenüber heute</div></div>`;
+  h+=`<div class="kpi"><div class="l">Mindestbestand</div><div class="v">${eur0(fix)}</div><div class="s">1 Monat Fixkosten · ${esc(P.fix.det.length?'BWA ohne Abschreibungen':'Auszahlungen ø Monat')}</div></div>`;
+  h+='</div>';
+  h+='<div style="margin-top:14px">'+linienChart(w.map(kwL),[{col:'var(--primary)',vals:w.map(x=>x.ende)},{col:'var(--amber)',vals:w.map(()=>fix),dash:true}].concat(P.kredit?[{col:'var(--red)',vals:w.map(()=>-P.kredit),dash:true}]:[]))+'</div>';
+  h+=`<p class="hint">Linie: Kontostand am Wochenende. Gestrichelt: Mindestbestand${P.kredit?' und Grenze der Kreditlinie':''}.</p>`;
+  // Wochentabelle
+  h+='<div class="tbl-wrap" style="margin-top:6px"><table><thead><tr><th>Woche</th><th>Zeitraum</th><th class="r">Anfang</th><th class="r">Einzahlungen</th><th class="r">Auszahlungen</th><th class="r">Ende</th><th class="r">Abstand zum Mindestbestand</th><th></th></tr></thead><tbody>';
+  w.forEach((x,i)=>{h+=`<tr${x===P.tief?' style="background:var(--fill)"':''}><td><b>${kwL(x)}</b>${i===0?' <span class="c-m">(ab '+fDM(liqPlus(P.stand,1))+')</span>':''}</td><td class="c-m">${fDM(x.von)} – ${fDM(x.bis)}</td><td class="r">${eur0(x.anfang)}</td><td class="r c-g">${eur0(x.ein)}</td><td class="r c-r">${eur0(x.aus)}</td><td class="r"><b>${eur0(x.ende)}</b></td><td class="r ${x.ende-fix>=0?'c-g':'c-r'}">${x.ende-fix>=0?'+':''}${eur0(x.ende-fix)}</td><td>${liqStatus(x.ende,fix)}</td></tr>`;});
+  const sE=w.reduce((t,x)=>t+x.ein,0),sA=w.reduce((t,x)=>t+x.aus,0);
+  h+=`<tr class="sum"><td colspan="3">${LIQ_WOCHEN} Wochen</td><td class="r">${eur0(sE)}</td><td class="r">${eur0(sA)}</td><td class="r">${eur0(w[LIQ_WOCHEN-1].ende)}</td><td colspan="2"></td></tr></tbody></table></div>`;
+  h+='</section>';
+  // Je Betrieb
+  if(bs.length>1){
+    const rows=[['KIMOJO'],['PHFIP'],['KIMOJO','PHFIP']].map(b=>({b,p:b.length>1?P:liqPrognose(b)})).filter(x=>x.p);
+    h+=`<section class="sec"><div class="sec-h"><h2>Je Betrieb</h2><span class="sub">Gesamt ohne Umbuchungen zwischen den Betrieben</span></div><div class="tbl-wrap"><table><thead><tr><th>Betrieb</th><th class="r">Kontostand</th><th>Stand</th><th class="r">Tiefster Stand</th><th>Woche</th><th class="r">In ${LIQ_WOCHEN} Wochen</th><th class="r">Mindestbestand</th><th></th></tr></thead><tbody>`;
+    rows.forEach(({b,p})=>{const nm=b.length>1?'BM Group gesamt':`<span class="site"><span class="dot" style="background:${LIQ_BETRIEB[b[0]].col}"></span>${esc(LIQ_BETRIEB[b[0]].l)}</span>`;h+=`<tr${b.length>1?' class="sum"':''}><td>${nm}</td><td class="r">${eur0(p.start)}</td><td class="c-m">${fDatU(p.stand)}</td><td class="r"><b>${eur0(p.tief.ende)}</b></td><td>${kwL(p.tief)}</td><td class="r">${eur0(p.wochen[LIQ_WOCHEN-1].ende)}</td><td class="r">${eur0(p.fix.wert)}</td><td>${liqStatus(p.tief.ende,p.fix.wert)}</td></tr>`;});
+    h+='</tbody></table></div></section>';
+  }
+  // Zusammensetzung
+  const zeile=sd=>P.met.filter(m=>m.sd===sd).sort((a,b)=>Math.abs(b.summe)-Math.abs(a.summe)).map(m=>`<tr><td>${esc(katName(sd,m.kat))}</td><td class="r ${sd==='ein'?'c-g':'c-r'}"><b>${eur0(m.summe)}</b></td><td class="r">${eur0(m.summe/LIQ_WOCHEN)}</td><td class="c-m">${Object.entries(m.art).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).map(([a])=>LIQ_ART[a]).join(', ')}</td></tr>`).join('');
+  h+=`<section class="sec"><div class="sec-h"><h2>Woraus die Vorschau besteht</h2><span class="sub">${LIQ_WOCHEN} Wochen je Kategorie</span></div><div class="tbl-wrap"><table><thead><tr><th>Kategorie</th><th class="r">${LIQ_WOCHEN} Wochen</th><th class="r">ø Woche</th><th>Herleitung</th></tr></thead><tbody><tr class="sum"><td colspan="4">Einzahlungen</td></tr>${zeile('ein')}<tr class="sum"><td colspan="4">Auszahlungen</td></tr>${zeile('aus')}</tbody></table></div>`;
+  h+=`<p class="hint">Grundlage sind die Bankbuchungen der letzten sechs Monate bis ${fDatU(P.stand)}. Feste Termine: gleicher Zahlungsbeteiligter mindestens dreimal monatlich oder zweimal im Zwei- bis Dreimonatsrhythmus, Betrag als Median der letzten drei Zahlungen. Laufend: Zahler mit mehreren Buchungen je Monat, verteilt auf die Werktage. Alles Übrige als Durchschnitt der letzten 13 Wochen. Nicht fortgeschrieben werden Einzelbeträge ab ${eur0(P.grenze)}, Umbuchungen zwischen eigenen Konten und Betrieben, Einlagen und Steuererstattungen. Zahlungen an Gesellschafter zählen nur, wenn sie in festem Rhythmus kommen.</p></section>`;
+  // Feste Termine
+  const TMIN=500,tGross=P.termine.filter(t=>Math.abs(t.b)>=TMIN),tKlein=P.termine.length-tGross.length;
+  if(tGross.length){
+    const tt=tGross.slice(0,60);
+    h+=`<section class="sec"><div class="sec-h"><h2>Erwartete feste Zahlungen</h2><span class="sub">${tGross.length} Termine ab ${eur0(TMIN)} in ${LIQ_WOCHEN} Wochen</span></div><div class="tbl-wrap"><table><thead><tr><th>Datum</th><th>Woche</th><th>Zahlungsbeteiligter</th><th>Kategorie</th><th>Rhythmus</th><th class="r">Betrag</th></tr></thead><tbody>${tt.map(t=>`<tr><td>${fDatU(t.d)}</td><td class="c-m">KW ${liqKW(t.d)}</td><td>${esc(t.name)}</td><td class="c-m">${esc(katName(t.b>0?'ein':'aus',t.kat))}</td><td class="c-m">${t.g===1?'monatlich':t.g===2?'alle 2 Monate':'quartalsweise'}</td><td class="r ${t.b>0?'c-g':'c-r'}"><b>${eur0(t.b)}</b></td></tr>`).join('')}</tbody></table></div><p class="hint">${tGross.length>tt.length?`Die ersten ${tt.length} Termine. `:''}${tKlein?`Dazu ${n0(tKlein)} kleinere feste Zahlungen unter ${eur0(TMIN)} (meist Patienten), zusammen ${eur0(P.termine.filter(t=>Math.abs(t.b)<TMIN).reduce((s,t)=>s+t.b,0))}; sie sind in der Vorschau enthalten.`:''}</p></section>`;
+  }
+  // Darlehen und Kreditlinie
+  const darl=[...new Map(P.termine.filter(t=>t.kat==='darlehen').map(t=>[t.name,t])).values()];
+  const bwaFin=bs.map(b=>{const bwa=D[b==='KIMOJO'?'bwaK':'bwaP']||{};const ms=MN.filter(m=>{const x=getBWA(bwa,m);return x&&x.voll&&x.voll.z;}).slice(-3);if(!ms.length)return null;const g=c=>ms.reduce((t,m)=>t+((getBWA(bwa,m).voll.z[c]||{}).ist||0),0)/ms.length;return{b,ms,tilg:g('1670'),zins:-g('1676')};}).filter(Boolean);
+  h+=`<section class="sec"><div class="sec-h"><h2>Darlehen und Kreditlinie</h2></div><div class="grid">`;
+  h+=`<div class="kpi"><div class="l">Kreditlinie</div><div class="v">${P.kredit?eur0(P.kredit):'—'}</div><div class="s">${P.kredit?'von der Bank gemeldet':'von der Bank nicht übermittelt'}</div></div>`;
+  bwaFin.forEach(x=>{h+=`<div class="kpi"><div class="l">Tilgung + Zinsen ø Monat · ${esc(LIQ_BETRIEB[x.b].l)}</div><div class="v">${eur0(x.tilg+Math.abs(x.zins))}</div><div class="s">Tilgung <b>${eur0(x.tilg)}</b> · Zinsen <b>${eur0(Math.abs(x.zins))}</b> · BWA ${esc(x.ms.join(', '))}</div></div>`;});
+  h+='</div>';
+  if(darl.length)h+=`<div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>Darlehen, Leasing</th><th>Rhythmus</th><th>Nächste Fälligkeit</th><th class="r">Rate</th></tr></thead><tbody>${darl.map(t=>`<tr><td>${esc(t.name)}</td><td class="c-m">${t.g===1?'monatlich':t.g===2?'alle 2 Monate':'quartalsweise'}</td><td>${fDatU(t.d)}</td><td class="r c-r"><b>${eur0(t.b)}</b></td></tr>`).join('')}</tbody></table></div>`;
+  h+='<p class="hint">Raten aus den wiederkehrenden Bankbuchungen der Kategorie Darlehen, Leasing und Zinsen. Tilgung und Zinsen laut Kapitalflussrechnung der BWA.</p></section>';
+  // Einmaleffekte
+  if(P.einmal.length)h+=`<section class="sec"><div class="sec-h"><h2>Nicht fortgeschrieben</h2><span class="sub">letzte 13 Wochen · ${P.einmal.length} Buchungen · ${eur0(P.einmal.reduce((t,x)=>t+x.b,0))}</span></div><div class="tbl-wrap"><table><thead><tr><th>Datum</th><th>Zahlungsbeteiligter</th><th>Grund</th><th class="r">Betrag</th></tr></thead><tbody>${P.einmal.slice(0,15).map(x=>`<tr><td>${fDatU(x.d)}</td><td>${esc(x.n||x.t||'—')}</td><td class="c-m">${esc(x.grund)}</td><td class="r ${x.b>0?'c-g':'c-r'}">${eur0(x.b)}</td></tr>`).join('')}</tbody></table></div></section>`;
+  // Konten
+  const alleK=(D.konten||[]).filter(k=>bs.includes(k.betrieb)||!k.betrieb);
+  h+=`<section class="sec"><div class="sec-h"><h2>Konten</h2><span class="sub">${D.bankAbruf&&D.bankAbruf.stand?'letzter Bankabruf '+D.bankAbruf.stand.toLocaleString('de-DE',{dateStyle:'short',timeStyle:'short'}):'Bankabruf noch nicht eingerichtet'}</span></div><div class="tbl-wrap"><table><thead><tr><th>Konto</th><th>Betrieb</th><th class="r">Kontostand</th><th>Stand</th><th class="r">Kreditlinie</th><th>Quelle</th><th>Freigabe bis</th></tr></thead><tbody>${alleK.map(k=>`<tr><td>${esc(k.name||'Konto')} <span class="c-m">…${esc(k.iban.slice(-6))}</span>${k.bank?'<br><span class="c-m" style="font-size:12px">'+esc(k.bank)+'</span>':''}</td><td>${k.betrieb?esc(LIQ_BETRIEB[k.betrieb].l):'<span class="pill p-a">nicht zugeordnet</span>'}</td><td class="r"><b>${k.saldo==null?'—':eur0(k.saldo)}</b></td><td class="c-m">${fDatU(k.saldoDatum)}</td><td class="r">${k.kreditlinie?eur0(k.kreditlinie):'—'}</td><td class="c-m">${esc(k.quelle)}</td><td class="c-m">${k.gueltigBis?fDatU(k.gueltigBis):'—'}</td></tr>`).join('')}</tbody></table></div>`;
+  if(alleK.some(k=>!k.betrieb))h+='<p class="hint">Nicht zugeordnete Konten zählen in keiner Vorschau. Zuordnung über „betriebe“ in ~/.bankabruf/config.json (IBAN → KIMOJO oder PHFIP).</p>';
+  h+='</section>';
+  return h;
+}
+function pLiquiditaet(){return liqVorschau()+liqReserven();}
+
+function liqReserven(){
   const ents=BANK_ENT.filter(e=>e.sites.some(s=>matchS(s)));
   // Stufe 1: Bank, letzter vorhandener Kontostand
   const bank=ents.map(e=>{const b=D[e.k]||{};const ms=MN.filter(m=>b[m]);const last=ms.length?ms[ms.length-1]:null;return{e,saldo:last?b[last].saldo:0,last,datum:b.voll&&last&&b.voll.monate[last]?b.voll.monate[last].saldoDatum:null};});
@@ -716,8 +885,8 @@ function pLiquiditaet(){
   const total=bankSum+ford+offSum;
   const pct=v=>total>0?Math.max(0,v)/total*100:0;
   const sub=`${esc(sn(aS))} · Stichtag heute${bankStand?' · Kontostand vom '+fDatU(bankStand):''}`;
-  let h=`<section class="sec"><div class="sec-h"><h2>Liquidität</h2><span class="sub">${sub}</span></div><div class="grid">`;
-  h+=`<div class="kpi big"><div class="l">Liquidität gesamt</div><div class="v">${eur0(total)}</div><div class="s">Bank + offene Forderungen + unabgerechnete Leistungen</div></div>`;
+  let h=`<section class="sec"><div class="sec-h"><h2>Liquiditätsreserve</h2><span class="sub">${sub}</span></div><div class="grid">`;
+  h+=`<div class="kpi big"><div class="l">Reserve gesamt</div><div class="v">${eur0(total)}</div><div class="s">Bank + offene Forderungen + unabgerechnete Leistungen</div></div>`;
   h+=`<div class="kpi"><div class="l">I · Bankguthaben</div><div class="v c-g">${eur0(bankSum)}</div><div class="s">sofort verfügbar · ${bankStand?'Stand '+fDatU(bankStand):'kein Kontoauszug'}</div></div>`;
   h+=`<div class="kpi"><div class="l">II · Offene Forderungen</div><div class="v" style="color:var(--blue)">${eur0(ford)}</div><div class="s">${n0(medifoxN+theveaN)} Rechnungen gestellt, noch nicht bezahlt</div></div>`;
   h+=`<div class="kpi"><div class="l">III · Unabgerechnet</div><div class="v c-a">${eur0(offSum)}</div><div class="s">erbracht, aber noch keine Rechnung</div></div>`;
