@@ -83,7 +83,7 @@ function zeigen(){
   const passt=x=>(ort==='Alle'||x.standort===ort)&&(!q||String(x.patient).toLowerCase().includes(q)||String(x.nr).toLowerCase().includes(q));
   let h=`<section class="sec"><div class="sec-h"><h2>So geht's</h2><span class="sub">Zahlungsziel 4 Wochen · Erinnerung · nach 14 Tagen Mahnung · nach weiteren 14 Tagen persönlich</span></div><div class="tk-steps">`;
   STUFEN.slice(0,3).reverse().forEach(([s,t,d])=>{h+=`<div class="tk-step"><b>${esc(t)} · ${L.liste.filter(x=>x.stufe===s&&passt(x)).length}</b>${esc(d)}</div>`;});
-  h+=`<div class="tk-step"><b>Bezahlt (Bank/Stripe) · ${L.bezahlt_laut_bank.filter(passt).length}</b>Überweisung oder Kartenzahlung ist da, die Rechnung steht im System noch offen. Im System als bezahlt buchen.</div></div>`;
+  h+=`<div class="tk-step"><b>Bezahlt (Bank/Stripe) · ${L.bezahlt_laut_bank.filter(passt).length}</b>Überweisung oder Kartenzahlung ist da, die Rechnung steht im System noch offen. Im System als bezahlt buchen – bei Club-Rechnungen in Stripe: Rechnung öffnen → „Als bezahlt markieren“ (außerhalb von Stripe bezahlt).</div></div>`;
   h+=`<p class="hint">Haken setzen, wenn erledigt. Die Haken gelten nur auf diesem Gerät. Gemahnt wird in thevea oder Medifox, damit die Stufe dort gespeichert ist; Club-Rechnungen kommen aus Stripe (ohne SEPA-Mandat oder Einzug fehlgeschlagen) und werden dort erneut gesendet. Die Liste wird dreimal täglich neu erstellt.${L.fehlende_namen?` Bei ${L.fehlende_namen} Medifox-Rechnungen fehlt der Patientenname noch, dort über die Rechnungsnummer suchen.`:''}</p></section>`;
   STUFEN.forEach(([s,t,d,pc])=>{
     const l=L.liste.filter(x=>x.stufe===s&&passt(x));if(!l.length)return;
