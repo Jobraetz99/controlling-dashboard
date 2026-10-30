@@ -731,6 +731,7 @@ async function loadAll(){
     const [bankK,bankP]=await Promise.all([bankKP,bankPP]);
     D.bankK=bankK||{};D.bankP=bankP||{};
     try{await bankKontenAufbauen();}catch(e){console.warn('Bankkonten:',e);D.konten=D.konten||[];}
+    try{D.extBezahlt=await extBezahltLaden();}catch(e){D.extBezahlt={};}
 
     // Therapeuten
     const ctrl=await ctrlP;
@@ -2851,6 +2852,9 @@ async function mgLaden(){
   return out;
 }
 
+// Rechnungen, die laut Bank oder Stripe bezahlt sind, im System aber noch offen stehen
+// (Mahnliste der Theke, Controlling/Theke/mahnliste.json, vom Bankabruf erzeugt).
+async function extBezahltLaden(){const o={};try{const t=await graphText('/12_Code/Controlling/Theke/mahnliste.json');const j=JSON.parse(String(t||'').replace(/^\uFEFF/,''));(j.bezahlt_laut_bank||[]).forEach(x=>{if(x&&x.nr)o[x.nr]={betrag:+x.bank_betrag||0,quelle:x.quelle||'Bank',am:x.bank_am};});Object.defineProperty(o,'_stand',{value:j.stand,enumerable:false});}catch(e){}return o;}
 // Standortfilter für MyWellness-Einträge (Ordnername Werneck/Kitzingen).
 function mwPasst(e){
   if(aS==='Alle')return true;
