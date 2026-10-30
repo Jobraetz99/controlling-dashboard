@@ -98,7 +98,7 @@ function texte(x,art){
   return{betreff:'Letzte Zahlungsaufforderung: Rechnung '+x.nr,
     text:`${hallo}\n\n${re} ist trotz Erinnerung und Mahnung weiterhin offen.\n\nBitte überweise den Betrag bis spätestens ${plusT(7)} an ${bank} – oder melde dich kurz bei uns, falls etwas nicht stimmt.\n\nBitte hab Verständnis, dass wir die Rechnung sonst weiter verfolgen müssen.\n\n${gruss}`};
 }
-function waNr(t){let d=String(t||'').replace(/[^\d+]/g,'');if(d.startsWith('+'))d=d.slice(1);else if(d.startsWith('00'))d=d.slice(2);else if(d.startsWith('0'))d='49'+d.slice(1);return d.length>=10?d:'';}
+function waNr(t){let d=String(t||'').replace(/[^\d+]/g,'');if(d.startsWith('+'))d=d.slice(1);else if(d.startsWith('00'))d=d.slice(2);else if(d.startsWith('049'))d=d.slice(1);else if(d.startsWith('0'))d='49'+d.slice(1);return d.length>=10&&(!d.startsWith('49')||/^491[5-7]/.test(d))?d:'';}
 const ART_ZU_STUFE={erinnerung:'erinnerung',mahnung:'mahnung',persoenlich:'letzte'};
 function sendeKnoepfe(x,s){
   const art=ART_ZU_STUFE[s];if(!art)return'';
