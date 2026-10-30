@@ -18,7 +18,11 @@
 tr.done td{opacity:.45;text-decoration:line-through}
 td.ck{width:28px}
 .tk-n{font-variant-numeric:tabular-nums}
-@media print{.top,.tk-tools,.tk-steps,.foot,.ck,#lo{display:none!important}.sec{break-inside:avoid;box-shadow:none;border:0}}
+.tk-alter{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--fill);margin:10px 0 6px}
+.tk-alter i{display:block;height:100%}
+.tk-leg{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.tk-leg span::before{content:'';display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px;background:var(--c)}
+@media print{.top,.tk-tools,.tk-steps,.foot,.ck,#lo,#tkStat{display:none!important}.sec{break-inside:avoid;box-shadow:none;border:0}}
 </style>
 </head>
 <body>
@@ -76,12 +80,40 @@ const STUFEN=[
   ['erinnerung','Zahlungserinnerung senden','Das Zahlungsziel von 4 Wochen ist überschritten. In thevea oder Medifox die Zahlungserinnerung drucken, bei Club-Rechnungen (Stripe) die Rechnung mit Zahlungslink aus Stripe erneut senden oder ein SEPA-Mandat einholen.','p-a'],
   ['wartet','Frist läuft','Erinnerung oder Mahnung ist raus, die Frist läuft noch. Nichts zu tun.','p-n']
 ];
+// Überblick oben: was ist überfällig, wie alt, wo. Folgt dem Standortfilter, nicht der Suche.
+// „Tage“ = Tage seit dem Zahlungsziel (bzw. der Frist der letzten Erinnerung/Mahnung bei „Frist läuft“).
+const ALTER=[['1–30 Tage',0,30,'#C9A227'],['31–60 Tage',31,60,'#D9822B'],['61–90 Tage',61,90,'#C0573E'],['über 90 Tage',91,1e9,'#8E2A22']];
+function statistik(imOrt){
+  const l=L.liste.filter(imOrt),b=L.bezahlt_laut_bank.filter(imOrt),sum=a=>a.reduce((t,x)=>t+(x.offen||0),0),tage=x=>Math.max(0,x.tage||0);
+  if(!l.length&&!b.length)return'';
+  const ges=sum(l),k30=l.filter(x=>tage(x)>30),k90=l.filter(x=>tage(x)>90),aus=b.reduce((t,x)=>t+(x.bank_betrag||0),0);
+  const pct=v=>ges?Math.round(v/ges*100)+' %':'—';
+  let h=`<section class="sec" id="tkStat"><div class="sec-h"><h2>Überblick</h2><span class="sub">${esc(ort==='Alle'?'alle Standorte':ort)} · fällig und noch nicht bezahlt</span></div><div class="grid">`;
+  h+=`<div class="kpi"><div class="l">Offen und fällig</div><div class="v">${eur(ges)}</div><div class="s"><b>${l.length}</b> Rechnung${l.length===1?'':'en'} · ø ${eur(l.length?ges/l.length:0)}</div></div>`;
+  h+=`<div class="kpi"><div class="l">Kritisch · über 30 Tage</div><div class="v" style="color:var(--red)">${eur(sum(k30))}</div><div class="s"><b>${k30.length}</b> Rechnungen · ${pct(sum(k30))} des offenen Betrags</div></div>`;
+  h+=`<div class="kpi"><div class="l">Über 90 Tage</div><div class="v" style="color:#8E2A22">${eur(sum(k90))}</div><div class="s"><b>${k90.length}</b> Rechnungen · persönlich klären oder abschreiben</div></div>`;
+  h+=`<div class="kpi"><div class="l">Bezahlt, nur ausbuchen</div><div class="v" style="color:var(--green)">${eur(aus)}</div><div class="s"><b>${b.length}</b> Rechnungen laut Bank oder Stripe</div></div>`;
+  h+='</div>';
+  // Altersstruktur
+  const st=ALTER.map(([lab,a,z,c])=>{const t=l.filter(x=>tage(x)>=a&&tage(x)<=z);return{lab,c,n:t.length,w:sum(t)};});
+  h+=`<div class="tk-alter">${st.filter(x=>x.w>0).map(x=>`<i style="width:${x.w/ges*100}%;background:${x.c}" title="${esc(x.lab)}: ${eur(x.w)}"></i>`).join('')}</div>`;
+  h+=`<div class="tk-leg">${st.map(x=>`<span style="--c:${x.c}">${esc(x.lab)}: <b>${eur(x.w)}</b> (${x.n})</span>`).join('')}</div>`;
+  // je Standort (nur bei „Alle“) und je Art
+  const zeile=(lab,t,bb)=>{const a=t.filter(x=>tage(x)>30),z=t.filter(x=>tage(x)>90);return`<tr><td>${esc(lab)}</td><td class="r tk-n">${t.length}</td><td class="r tk-n"><b>${eur(sum(t))}</b></td><td class="r tk-n" style="color:var(--red)">${eur(sum(a))}</td><td class="r tk-n" style="color:#8E2A22">${eur(sum(z))}</td><td class="r tk-n" style="color:var(--green)">${bb?eur(bb.reduce((s,x)=>s+(x.bank_betrag||0),0)):'—'}</td></tr>`;};
+  const kopf=t=>`<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>${t}</th><th class="r">Rechnungen</th><th class="r">Offen</th><th class="r">über 30 Tage</th><th class="r">über 90 Tage</th><th class="r">Zum Ausbuchen</th></tr></thead><tbody>`;
+  if(ort==='Alle'){const orte=[...new Set(l.map(x=>x.standort).concat(b.map(x=>x.standort)))].sort();
+    h+=kopf('Standort')+orte.map(o=>zeile(o,l.filter(x=>x.standort===o),b.filter(x=>x.standort===o))).join('')+'</tbody></table></div>';}
+  const arten=[...new Set(l.map(x=>x.art))].sort();
+  if(arten.length>1)h+=kopf('Art')+arten.map(a=>zeile(a,l.filter(x=>x.art===a),b.filter(x=>x.art===a))).join('')+'</tbody></table></div>';
+  return h+'</section>';
+}
 function zeigen(){
   if(!L)return;const q=(document.getElementById('such').value||'').toLowerCase(),k=kv();
   const orte=['Alle',...new Set(L.liste.map(x=>x.standort).concat(L.bezahlt_laut_bank.map(x=>x.standort)))];
   document.getElementById('chips').innerHTML=orte.map(o=>`<button class="chip${o===ort?' a':''}" onclick="ort='${esc(o)}';zeigen()">${esc(o)}</button>`).join('');
   const passt=x=>(ort==='Alle'||x.standort===ort)&&(!q||String(x.patient).toLowerCase().includes(q)||String(x.nr).toLowerCase().includes(q));
-  let h=`<section class="sec"><div class="sec-h"><h2>So geht's</h2><span class="sub">Zahlungsziel 4 Wochen · Erinnerung · nach 14 Tagen Mahnung · nach weiteren 14 Tagen persönlich</span></div><div class="tk-steps">`;
+  let h=statistik(x=>ort==='Alle'||x.standort===ort);
+  h+=`<section class="sec"><div class="sec-h"><h2>So geht's</h2><span class="sub">Zahlungsziel 4 Wochen · Erinnerung · nach 14 Tagen Mahnung · nach weiteren 14 Tagen persönlich</span></div><div class="tk-steps">`;
   STUFEN.slice(0,3).reverse().forEach(([s,t,d])=>{h+=`<div class="tk-step"><b>${esc(t)} · ${L.liste.filter(x=>x.stufe===s&&passt(x)).length}</b>${esc(d)}</div>`;});
   h+=`<div class="tk-step"><b>Bezahlt (Bank/Stripe) · ${L.bezahlt_laut_bank.filter(passt).length}</b>Überweisung oder Kartenzahlung ist da, die Rechnung steht im System noch offen. Im System als bezahlt buchen – bei Club-Rechnungen in Stripe: Rechnung öffnen → „Als bezahlt markieren“ (außerhalb von Stripe bezahlt).</div></div>`;
   h+=`<p class="hint">Haken setzen, wenn erledigt. Die Haken gelten nur auf diesem Gerät. Gemahnt wird in thevea oder Medifox, damit die Stufe dort gespeichert ist; Club-Rechnungen kommen aus Stripe (ohne SEPA-Mandat oder Einzug fehlgeschlagen) und werden dort erneut gesendet. Die Liste wird dreimal täglich neu erstellt.${L.fehlende_namen?` Bei ${L.fehlende_namen} Medifox-Rechnungen fehlt der Patientenname noch, dort über die Rechnungsnummer suchen.`:''}</p></section>`;
