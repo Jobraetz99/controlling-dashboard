@@ -28,6 +28,16 @@ td.ck{width:28px}
 #vorschau .kn{display:flex;gap:8px;justify-content:flex-end}
 #vorschau button{border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 12px;font:inherit;font-weight:600;cursor:pointer}
 .tk-gesendet{font-size:11.5px;color:var(--green);margin-top:3px}
+.tk-notiz{font-size:12px;margin-top:4px;max-width:260px}
+.tk-notiz .n{background:#fff8e1;border-radius:6px;padding:3px 7px;margin-top:3px;color:var(--dark)}
+.tk-notiz .n i{font-style:normal;color:var(--muted,#888)}
+.tk-nb{border:0;background:none;padding:2px 0;font:inherit;font-size:12px;color:var(--muted,#888);cursor:pointer;text-decoration:underline}
+#notiz{border:1px solid var(--border);border-radius:12px;padding:18px 20px;max-width:480px;width:calc(100% - 32px)}
+#notiz::backdrop{background:rgba(0,0,0,.35)}
+#notiz textarea{width:100%;box-sizing:border-box;font:inherit;font-size:14px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin:10px 0 12px;resize:vertical}
+#notiz .kn{display:flex;gap:8px;justify-content:flex-end}
+#notiz button{border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 12px;font:inherit;font-weight:600;cursor:pointer}
+#notiz .prim{background:var(--dark);color:#fff;border-color:var(--dark)}
 .tk-alter{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--fill);margin:10px 0 6px}
 .tk-alter i{display:block;height:100%}
 .tk-leg{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
@@ -63,6 +73,7 @@ Mit Microsoft anmelden</button>
 const DRIVE='b!zgsNEKo9i02za4U_T3YWkHozjYkq7Z5PnXUOMXxU2mTsYCEji1-zTKOR1AXQWneL';
 const PFAD='12_Code/Controlling/Theke/mahnliste.json';
 const VPFAD='12_Code/Controlling/Theke/versand.json';   // gemeinsames Versandprotokoll
+const NPFAD='12_Code/Controlling/Theke/notizen.json';   // gemeinsame Notizen je Rechnung
 const LR={scopes:['Files.Read','Sites.Read.All']},LW={scopes:['Files.ReadWrite']};
 const app=new msal.PublicClientApplication({auth:{clientId:'9fe9cda7-79c3-4d06-82dc-372715bb8086',authority:'https://login.microsoftonline.com/3e5c8d47-8ccc-42f6-877d-0d0e72972e39',redirectUri:location.origin+location.pathname.replace(/theke\.html$/,'')},cache:{cacheLocation:'localStorage'}});
 let L=null,ort='Alle';
@@ -77,15 +88,17 @@ async function token(sc){sc=sc||LR;const a=app.getActiveAccount();try{return(awa
 const gpfad=p=>'https://graph.microsoft.com/v1.0/drives/'+DRIVE+'/root:/'+p.split('/').map(encodeURIComponent).join('/')+':';
 // ── Versand: WhatsApp bevorzugt, sonst E-Mail; Texte per Du, mit jeder Stufe bestimmter ──
 let VERS={};   // Rechnungsnummer → Einträge aus versand.json (live, auch nach dem letzten Listenlauf)
-async function versandLaden(){try{const r=await fetch(gpfad(VPFAD)+'/content',{cache:'no-store',headers:{Authorization:'Bearer '+await token()}});if(!r.ok){VERS={};return;}const j=JSON.parse((await r.text()).replace(/^\uFEFF/,''));VERS={};(j.eintraege||[]).forEach(e=>{(VERS[e.nr]=VERS[e.nr]||[]).push(e);});}catch(e){VERS={};}}
-async function versandSchreiben(eintrag){
+async function protokollLaden(pfad){const o={};try{const r=await fetch(gpfad(pfad)+'/content',{cache:'no-store',headers:{Authorization:'Bearer '+await token()}});if(!r.ok)return o;const j=JSON.parse((await r.text()).replace(/^\uFEFF/,''));(j.eintraege||[]).forEach(e=>{(o[e.nr]=o[e.nr]||[]).push(e);});}catch(e){}return o;}
+let NOTIZ={};   // Rechnungsnummer → Notizen aus notizen.json
+async function versandLaden(){[VERS,NOTIZ]=await Promise.all([protokollLaden(VPFAD),protokollLaden(NPFAD)]);}
+async function versandSchreiben(eintrag,pfad=VPFAD){
   const t=await token(LW);
   for(let i=0;i<4;i++){
     let etag=null,j={eintraege:[]};
-    const m=await fetch(gpfad(VPFAD),{cache:'no-store',headers:{Authorization:'Bearer '+t}});
-    if(m.ok){etag=(await m.json()).eTag;const c=await fetch(gpfad(VPFAD)+'/content',{cache:'no-store',headers:{Authorization:'Bearer '+t}});if(c.ok)j=JSON.parse((await c.text()).replace(/^\uFEFF/,''));}
+    const m=await fetch(gpfad(pfad),{cache:'no-store',headers:{Authorization:'Bearer '+t}});
+    if(m.ok){etag=(await m.json()).eTag;const c=await fetch(gpfad(pfad)+'/content',{cache:'no-store',headers:{Authorization:'Bearer '+t}});if(c.ok)j=JSON.parse((await c.text()).replace(/^\uFEFF/,''));}
     j.eintraege=(j.eintraege||[]).concat([eintrag]);j.stand=new Date().toISOString();
-    const r=await fetch(gpfad(VPFAD)+'/content',{method:'PUT',headers:{Authorization:'Bearer '+t,'Content-Type':'application/json',...(etag?{'If-Match':etag}:{'If-None-Match':'*'})},body:JSON.stringify(j,null,1)});
+    const r=await fetch(gpfad(pfad)+'/content',{method:'PUT',headers:{Authorization:'Bearer '+t,'Content-Type':'application/json',...(etag?{'If-Match':etag}:{'If-None-Match':'*'})},body:JSON.stringify(j,null,1)});
     if(r.ok)return true;
     if(r.status!==412&&r.status!==409)throw new Error(r.status===403?'Kein Schreibrecht auf den Ordner „Theke“ – bitte die Praxisleitung fragen.':'Speichern fehlgeschlagen ('+r.status+')');
   }
@@ -128,7 +141,17 @@ async function senden(nr,art,kanal){
   try{await versandSchreiben(e);(VERS[nr]=VERS[nr]||[]).push(e);zeigen();}
   catch(err){alert('Nachricht geöffnet, aber nicht im Protokoll gespeichert: '+(err.message||err)+'\nBitte den Haken setzen und der Praxisleitung Bescheid geben.');}
 }
-function gesendetZeile(x){const v=(VERS[x.nr]||[]);const l=v[v.length-1];if(!l)return'';return`<div class="tk-gesendet">✓ ${({erinnerung:'Erinnerung',mahnung:'Mahnung',letzte:'Letzte Aufforderung'})[l.stufe]||l.stufe} am ${dat(l.am)} per ${l.kanal==='whatsapp'?'WhatsApp':'E-Mail'}${l.von?' ('+esc(l.von.split(' ')[0])+')':''}</div>`;}
+function gesendetZeile(x){return(VERS[x.nr]||[]).map(l=>`<div class="tk-gesendet">✓ ${({erinnerung:'Erinnerung',mahnung:'Mahnung',letzte:'Letzte Aufforderung'})[l.stufe]||l.stufe} am ${dat(l.am)} per ${l.kanal==='whatsapp'?'WhatsApp':'E-Mail'}${l.von?' ('+esc(l.von.split(' ')[0])+')':''}</div>`).join('');}
+function notizZeile(x){const n=NOTIZ[x.nr]||[];return`<div class="tk-notiz">${n.map(e=>`<div class="n"><i>${dat(e.am)}${e.von?' · '+esc(e.von.split(' ')[0]):''}:</i> ${esc(e.text)}</div>`).join('')}<button class="tk-nb" onclick="notizOeffnen('${esc(x.nr)}')">${n.length?'+ weitere Notiz':'+ Notiz'}</button></div>`;}
+let NOTIZ_NR=null;
+function notizOeffnen(nr){const x=L.liste.concat(L.bezahlt_laut_bank).find(y=>y.nr===nr)||{nr},d=document.getElementById('notiz');NOTIZ_NR=nr;
+  d.querySelector('h3').textContent='Notiz · '+(x.patient?x.patient+' · ':'')+nr;d.querySelector('textarea').value='';d.showModal();d.querySelector('textarea').focus();}
+async function notizSpeichern(){const d=document.getElementById('notiz'),text=d.querySelector('textarea').value.trim();if(!text||!NOTIZ_NR)return;
+  const a=app.getActiveAccount(),e={nr:NOTIZ_NR,am:new Date().toISOString().slice(0,10),zeit:new Date().toISOString(),von:(a&&(a.name||a.username))||'',text};
+  const b=d.querySelector('.prim');b.disabled=true;b.textContent='Speichert …';
+  try{await versandSchreiben(e,NPFAD);(NOTIZ[e.nr]=NOTIZ[e.nr]||[]).push(e);d.close();zeigen();}
+  catch(err){alert('Notiz nicht gespeichert: '+(err.message||err));}
+  finally{b.disabled=false;b.textContent='Speichern';}}
 async function laden(){
   document.getElementById('lo').style.display='none';document.getElementById('db').style.display='block';
   document.getElementById('page').innerHTML='<div class="empty">Lade Liste …</div>';
@@ -191,23 +214,24 @@ function zeigen(){
   // Zahlung ohne Rechnungsnummer gefunden (gleicher Betrag, Name passt): erst prüfen, dann ausbuchen
   const zg=L.liste.filter(x=>x.kandidat&&passt(x));
   if(zg.length){h+=`<section class="sec"><div class="sec-h"><h2>Zahlung gefunden – bitte prüfen</h2><span class="sub">${zg.length} Rechnung${zg.length>1?'en':''} · ${eur(zg.reduce((a,x)=>a+x.offen,0))} · Betrag und Name passen, die Rechnungsnummer fehlt im Verwendungszweck</span></div><div class="tbl-wrap"><table><thead><tr><th class="ck"></th><th>Patient</th><th>Rechnung</th><th>Standort</th><th class="r">Offen</th><th>Eingang</th><th>Von / Verwendungszweck</th></tr></thead><tbody>`;
-    zg.forEach(x=>{const done=k[x.nr+'|gefunden'];h+=`<tr class="${done?'done':''}"><td class="ck"><input type="checkbox" ${done?'checked':''} onchange="erledigt('${esc(x.nr)}','gefunden',this.checked)" title="geprüft und ausgebucht"></td><td><b>${esc(x.patient||'—')}</b></td><td>${esc(x.nr)}<br><span class="c-m" style="font-size:12px">${esc(x.system)}</span></td><td class="c-m">${esc(x.standort)}</td><td class="r tk-n"><b>${eur(x.offen)}</b></td><td class="tk-n">${dat(x.kandidat.am)}<br><span class="c-m" style="font-size:12px">${eur(x.kandidat.betrag)}</span></td><td style="font-size:12.5px">${esc(x.kandidat.von)}<br><span class="c-m">${esc(x.kandidat.text||'ohne Verwendungszweck')}</span></td></tr>`;});
+    zg.forEach(x=>{const done=k[x.nr+'|gefunden'];h+=`<tr class="${done?'done':''}"><td class="ck"><input type="checkbox" ${done?'checked':''} onchange="erledigt('${esc(x.nr)}','gefunden',this.checked)" title="geprüft und ausgebucht"></td><td><b>${esc(x.patient||'—')}</b>${notizZeile(x)}</td><td>${esc(x.nr)}<br><span class="c-m" style="font-size:12px">${esc(x.system)}</span></td><td class="c-m">${esc(x.standort)}</td><td class="r tk-n"><b>${eur(x.offen)}</b></td><td class="tk-n">${dat(x.kandidat.am)}<br><span class="c-m" style="font-size:12px">${eur(x.kandidat.betrag)}</span></td><td style="font-size:12.5px">${esc(x.kandidat.von)}<br><span class="c-m">${esc(x.kandidat.text||'ohne Verwendungszweck')}</span></td></tr>`;});
     h+='</tbody></table></div><p class="hint">Passt die Zahlung zur Rechnung, im System bzw. in Stripe als bezahlt buchen; sonst normal erinnern. Die Rechnungen stehen zusätzlich unten in ihrer Stufe.</p></section>';}
   STUFEN.forEach(([s,t,d,pc])=>{
     const l=L.liste.filter(x=>x.stufe===s&&passt(x));if(!l.length)return;
     h+=`<section class="sec"><div class="sec-h"><h2>${esc(t)}</h2><span class="sub">${l.length} Rechnung${l.length>1?'en':''} · ${eur(l.reduce((a,x)=>a+x.offen,0))}</span></div><div class="tbl-wrap"><table><thead><tr><th class="ck"></th><th>Patient</th><th>Rechnung</th><th>Art</th><th>Standort</th><th>Datum</th><th class="r">Überfällig</th><th class="r">Offen</th>${s==='wartet'?'<th>Frist bis</th>':''}${ART_ZU_STUFE[s]?'<th>Senden</th>':''}</tr></thead><tbody>`;
-    l.forEach(x=>{const done=k[x.nr+'|'+s];h+=`<tr class="${done?'done':''}"><td class="ck"><input type="checkbox" ${done?'checked':''} onchange="erledigt('${esc(x.nr)}','${s}',this.checked)" title="erledigt"></td><td><b>${esc(x.patient||'—')}</b>${x.mobil?`<br><span class="c-m" style="font-size:12px">${esc(x.mobil)}</span>`:''}${x.email?`<br><span class="c-m" style="font-size:12px">${esc(x.email)}</span>`:''}${gesendetZeile(x)}</td><td>${esc(x.nr)}<br><span class="c-m" style="font-size:12px">${esc(x.system)}${x.hinweis?' · '+esc(x.hinweis):''}</span>${x.kandidat?`<br><span class="pill p-g" style="font-size:11px">Zahlung vom ${dat(x.kandidat.am)} gefunden – prüfen</span>`:''}</td><td>${esc(x.art)}</td><td class="c-m">${esc(x.standort)}</td><td>${dat(x.datum)}</td><td class="r tk-n">${x.tage==null?'—':`<span class="pill ${pc}">${x.tage} Tage</span>`}</td><td class="r tk-n"><b>${eur(x.offen)}</b>${x.teilzahlung_bank?`<br><span class="c-m" style="font-size:12px">Teilzahlung ${eur(x.teilzahlung_bank)}</span>`:''}</td>${s==='wartet'?`<td>${dat(x.frist)}</td>`:''}${ART_ZU_STUFE[s]?`<td>${sendeKnoepfe(x,s)}</td>`:''}</tr>`;});
+    l.forEach(x=>{const done=k[x.nr+'|'+s];h+=`<tr class="${done?'done':''}"><td class="ck"><input type="checkbox" ${done?'checked':''} onchange="erledigt('${esc(x.nr)}','${s}',this.checked)" title="erledigt"></td><td><b>${esc(x.patient||'—')}</b>${x.mobil?`<br><span class="c-m" style="font-size:12px">${esc(x.mobil)}</span>`:''}${x.email?`<br><span class="c-m" style="font-size:12px">${esc(x.email)}</span>`:''}${gesendetZeile(x)}${notizZeile(x)}</td><td>${esc(x.nr)}<br><span class="c-m" style="font-size:12px">${esc(x.system)}${x.hinweis?' · '+esc(x.hinweis):''}</span>${x.kandidat?`<br><span class="pill p-g" style="font-size:11px">Zahlung vom ${dat(x.kandidat.am)} gefunden – prüfen</span>`:''}</td><td>${esc(x.art)}</td><td class="c-m">${esc(x.standort)}</td><td>${dat(x.datum)}</td><td class="r tk-n">${x.tage==null?'—':`<span class="pill ${pc}">${x.tage} Tage</span>`}</td><td class="r tk-n"><b>${eur(x.offen)}</b>${x.teilzahlung_bank?`<br><span class="c-m" style="font-size:12px">Teilzahlung ${eur(x.teilzahlung_bank)}</span>`:''}</td>${s==='wartet'?`<td>${dat(x.frist)}</td>`:''}${ART_ZU_STUFE[s]?`<td>${sendeKnoepfe(x,s)}</td>`:''}</tr>`;});
     h+='</tbody></table></div></section>';
   });
   const b=L.bezahlt_laut_bank.filter(passt);
   if(b.length){h+=`<section class="sec"><div class="sec-h"><h2>Bezahlt laut Bank oder Stripe · im System ausbuchen</h2><span class="sub">${b.length} Rechnung${b.length>1?'en':''}</span></div><div class="tbl-wrap"><table><thead><tr><th class="ck"></th><th>Patient</th><th>Rechnung</th><th>Art</th><th>Standort</th><th>Rechnung vom</th><th>Bezahlt am</th><th>Über</th><th class="r">Betrag</th></tr></thead><tbody>`;
-    b.forEach(x=>{const done=k[x.nr+'|bank'];h+=`<tr class="${done?'done':''}"><td class="ck"><input type="checkbox" ${done?'checked':''} onchange="erledigt('${esc(x.nr)}','bank',this.checked)" title="im System gebucht"></td><td><b>${esc(x.patient||'—')}</b></td><td>${esc(x.nr)}<br><span class="c-m" style="font-size:12px">${esc(x.system)}</span></td><td>${esc(x.art)}</td><td class="c-m">${esc(x.standort)}</td><td>${dat(x.datum)}</td><td>${dat(x.bank_am)}</td><td>${esc(x.quelle==='Stripe'?'Karte (Stripe)':x.quelle==='Bank+Stripe'?'Bank + Karte':'Überweisung')}</td><td class="r tk-n"><b>${eur(x.bank_betrag)}</b></td></tr>`;});
+    b.forEach(x=>{const done=k[x.nr+'|bank'];h+=`<tr class="${done?'done':''}"><td class="ck"><input type="checkbox" ${done?'checked':''} onchange="erledigt('${esc(x.nr)}','bank',this.checked)" title="im System gebucht"></td><td><b>${esc(x.patient||'—')}</b>${notizZeile(x)}</td><td>${esc(x.nr)}<br><span class="c-m" style="font-size:12px">${esc(x.system)}</span></td><td>${esc(x.art)}</td><td class="c-m">${esc(x.standort)}</td><td>${dat(x.datum)}</td><td>${dat(x.bank_am)}</td><td>${esc(x.quelle==='Stripe'?'Karte (Stripe)':x.quelle==='Bank+Stripe'?'Bank + Karte':'Überweisung')}</td><td class="r tk-n"><b>${eur(x.bank_betrag)}</b></td></tr>`;});
     h+='</tbody></table></div></section>';}
   if(!L.liste.some(passt)&&!b.length)h+='<section class="sec"><div class="empty">Keine offenen Rechnungen. 🎉</div></section>';
   document.getElementById('page').innerHTML=h;
 }
 app.initialize().then(async()=>{const a=app.getAllAccounts();if(a.length){app.setActiveAccount(a[0]);await laden();}});
 </script>
+<dialog id="notiz"><h3 style="margin:0;font-size:15px"></h3><textarea rows="3" placeholder="z. B. am Telefon erreicht, zahlt nächste Woche · Zahlung geprüft, passt" onkeydown="if(event.key==='Enter'&&(event.metaKey||event.ctrlKey))notizSpeichern()"></textarea><div class="kn"><button onclick="this.closest('dialog').close()">Abbrechen</button><button class="prim" onclick="notizSpeichern()">Speichern</button></div><p class="c-m" style="font-size:12px;margin:10px 0 0">Notizen sehen alle an der Theke. Sie bleiben dauerhaft an der Rechnungsnummer.</p></dialog>
 <dialog id="vorschau"><h3 style="margin:0;font-size:15px"></h3><pre></pre><div class="kn"><button onclick="navigator.clipboard.writeText(this.closest('dialog').querySelector('pre').textContent);this.textContent='Kopiert'">Text kopieren</button><button onclick="this.closest('dialog').close();this.parentNode.firstChild.textContent='Text kopieren'">Schließen</button></div></dialog>
 </body>
 </html>
