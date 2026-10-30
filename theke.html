@@ -88,15 +88,15 @@ async function versandSchreiben(eintrag){
 }
 const plusT=n=>{const d=new Date();d.setDate(d.getDate()+n);return d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'});};
 function texte(x,art){
-  const hallo='Hallo'+(x.vorname?' '+x.vorname:'')+',',re=`deine Rechnung ${x.nr} vom ${dat(x.datum)} über ${eur(x.offen)}`;
+  const hallo='Hallo'+(x.vorname?' '+x.vorname:'')+`,\nhier ist ${x.praxis}`,re=`deine Rechnung ${x.nr} vom ${dat(x.datum)} über ${eur(x.offen)}`;
   const bank=`${x.empfaenger}, IBAN ${x.iban}, Verwendungszweck ${x.nr}`,gruss=`Viele Grüße\ndein Team von ${x.praxis}`;
   const v=(VERS[x.nr]||[]).concat(x.versand||[]),erinnert=v.filter(e=>e.stufe==='erinnerung').map(e=>e.am).sort()[0];
   if(art==='erinnerung')return{betreff:'Kurze Erinnerung: Rechnung '+x.nr,
-    text:`${hallo}\n\nkurze Erinnerung von uns 😊 Für ${re} ist bei uns noch keine Zahlung eingegangen – bestimmt einfach im Alltag untergegangen.\n\nÜberweise den Betrag gern an ${bank}.\n\nFalls du schon bezahlt hast, ignorier diese Nachricht einfach.\n\n${gruss}`};
+    text:`${hallo} 🙂\n\nKurze Erinnerung: Für ${re} ist bei uns noch keine Zahlung eingegangen – bestimmt einfach im Alltag untergegangen.\n\nÜberweise den Betrag gern an ${bank}.\n\nFalls du schon bezahlt hast, gib uns einfach kurz Bescheid 🙂\n\n${gruss}`};
   if(art==='mahnung')return{betreff:'Zahlungserinnerung: Rechnung '+x.nr,
-    text:`${hallo}\n\nwir hatten dich${erinnert?' am '+dat(erinnert):''} schon an ${re} erinnert, die Zahlung ist aber noch nicht bei uns eingegangen.\n\nBitte überweise den offenen Betrag bis spätestens ${plusT(14)} an ${bank}.\n\nWenn es ein Problem gibt, sprich uns bitte an – dann finden wir gemeinsam eine Lösung.\n\n${gruss}`};
+    text:`${hallo}.\n\nWir hatten dich${erinnert?' am '+dat(erinnert):''} schon an ${re} erinnert, die Zahlung ist aber noch nicht bei uns eingegangen.\n\nBitte überweise den offenen Betrag bis spätestens ${plusT(14)} an ${bank}.\n\nWenn es ein Problem gibt, sprich uns bitte an – dann finden wir gemeinsam eine Lösung.\n\n${gruss}`};
   return{betreff:'Letzte Zahlungsaufforderung: Rechnung '+x.nr,
-    text:`${hallo}\n\n${re} ist trotz Erinnerung und Mahnung weiterhin offen.\n\nBitte überweise den Betrag bis spätestens ${plusT(7)} an ${bank} – oder melde dich kurz bei uns, falls etwas nicht stimmt.\n\nBitte hab Verständnis, dass wir die Rechnung sonst weiter verfolgen müssen.\n\n${gruss}`};
+    text:`${hallo}.\n\nD${re.slice(1)} ist trotz Erinnerung und Mahnung weiterhin offen.\n\nBitte überweise den Betrag bis spätestens ${plusT(7)} an ${bank} – oder melde dich kurz bei uns, falls etwas nicht stimmt.\n\nBitte hab Verständnis, dass wir die Rechnung sonst weiter verfolgen müssen.\n\n${gruss}`};
 }
 function waNr(t){let d=String(t||'').replace(/[^\d+]/g,'');if(d.startsWith('+'))d=d.slice(1);else if(d.startsWith('00'))d=d.slice(2);else if(d.startsWith('049'))d=d.slice(1);else if(d.startsWith('0'))d='49'+d.slice(1);return d.length>=10&&(!d.startsWith('49')||/^491[5-7]/.test(d))?d:'';}
 const ART_ZU_STUFE={erinnerung:'erinnerung',mahnung:'mahnung',persoenlich:'letzte'};
