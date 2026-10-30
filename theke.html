@@ -22,6 +22,11 @@ td.ck{width:28px}
 .tk-send button,.tk-send a{border:1px solid var(--border);background:var(--card,#fff);border-radius:8px;padding:5px 9px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;color:var(--dark);text-decoration:none;white-space:nowrap}
 .tk-send .wa{background:#25D366;border-color:#25D366;color:#fff}
 .tk-send .wa:hover{background:#1ebe5a}
+#vorschau{border:1px solid var(--border);border-radius:12px;padding:18px 20px;max-width:520px;width:calc(100% - 32px)}
+#vorschau::backdrop{background:rgba(0,0,0,.35)}
+#vorschau pre{white-space:pre-wrap;font:inherit;font-size:14px;line-height:1.45;background:#f3f6f4;border-radius:10px;padding:12px 14px;margin:10px 0 14px}
+#vorschau .kn{display:flex;gap:8px;justify-content:flex-end}
+#vorschau button{border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 12px;font:inherit;font-weight:600;cursor:pointer}
 .tk-gesendet{font-size:11.5px;color:var(--green);margin-top:3px}
 .tk-alter{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--fill);margin:10px 0 6px}
 .tk-alter i{display:block;height:100%}
@@ -105,10 +110,15 @@ function sendeKnoepfe(x,s){
   const wa=waNr(x.mobil),lab={erinnerung:'Erinnerung',mahnung:'Mahnung',letzte:'Letzte Aufforderung'}[art];
   let h='<div class="tk-send">';
   if(wa)h+=`<button class="wa" onclick="senden('${esc(x.nr)}','${art}','whatsapp')" title="WhatsApp mit fertigem Text öffnen">WhatsApp · ${lab}</button>`;
+  if(wa||x.email)h+=`<button onclick="vorschau('${esc(x.nr)}','${art}')" title="Text ansehen, ohne zu senden (wird nicht protokolliert)">Vorschau</button>`;
   if(x.email)h+=`<button onclick="senden('${esc(x.nr)}','${art}','email')" title="E-Mail mit fertigem Text öffnen">E-Mail${wa?'':' · '+lab}</button>`;
   if(!wa&&!x.email)h+='<span class="c-m" style="font-size:12px">keine Handynummer/E-Mail</span>';
   if(x.telefon||x.mobil)h+=`<a href="tel:${esc(String(x.mobil||x.telefon).replace(/[^\d+]/g,''))}" title="anrufen">📞</a>`;
   return h+'</div>';
+}
+function vorschau(nr,art){
+  const x=L.liste.find(y=>y.nr===nr);if(!x)return;const t=texte(x,art),d=document.getElementById('vorschau');
+  d.querySelector('h3').textContent='Vorschau · '+t.betreff;d.querySelector('pre').textContent=t.text;d.showModal();
 }
 async function senden(nr,art,kanal){
   const x=L.liste.find(y=>y.nr===nr);if(!x)return;const t=texte(x,art);
@@ -198,5 +208,6 @@ function zeigen(){
 }
 app.initialize().then(async()=>{const a=app.getAllAccounts();if(a.length){app.setActiveAccount(a[0]);await laden();}});
 </script>
+<dialog id="vorschau"><h3 style="margin:0;font-size:15px"></h3><pre></pre><div class="kn"><button onclick="navigator.clipboard.writeText(this.closest('dialog').querySelector('pre').textContent);this.textContent='Kopiert'">Text kopieren</button><button onclick="this.closest('dialog').close();this.parentNode.firstChild.textContent='Text kopieren'">Schließen</button></div></dialog>
 </body>
 </html>
