@@ -88,7 +88,7 @@ function statistik(imOrt){
   if(!l.length&&!b.length)return'';
   const ges=sum(l),k30=l.filter(x=>tage(x)>30),k90=l.filter(x=>tage(x)>90),aus=b.reduce((t,x)=>t+(x.bank_betrag||0),0);
   const pct=v=>ges?Math.round(v/ges*100)+' %':'—';
-  let h=`<section class="sec" id="tkStat"><div class="sec-h"><h2>Überblick</h2><span class="sub">${esc(ort==='Alle'?'alle Standorte':ort)} · fällig und noch nicht bezahlt</span></div><div class="grid">`;
+  let h=`<section class="sec" id="tkStat"><div class="sec-h"><h2>Überblick</h2><span class="sub">${esc(ort==='Alle'?'alle Standorte':ort)} · fällig und noch nicht bezahlt${L.ab?' · Rechnungen ab '+dat(L.ab):''}</span></div><div class="grid">`;
   h+=`<div class="kpi"><div class="l">Offen und fällig</div><div class="v">${eur(ges)}</div><div class="s"><b>${l.length}</b> Rechnung${l.length===1?'':'en'} · ø ${eur(l.length?ges/l.length:0)}</div></div>`;
   h+=`<div class="kpi"><div class="l">Kritisch · über 30 Tage</div><div class="v" style="color:var(--red)">${eur(sum(k30))}</div><div class="s"><b>${k30.length}</b> Rechnungen · ${pct(sum(k30))} des offenen Betrags</div></div>`;
   h+=`<div class="kpi"><div class="l">Über 90 Tage</div><div class="v" style="color:#8E2A22">${eur(sum(k90))}</div><div class="s"><b>${k90.length}</b> Rechnungen · persönlich klären oder abschreiben</div></div>`;
