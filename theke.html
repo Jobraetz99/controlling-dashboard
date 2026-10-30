@@ -75,6 +75,7 @@ async function laden(){
   }catch(e){document.getElementById('page').innerHTML='<div class="empty">'+esc(e.message||e)+'</div>';}
 }
 const STUFEN=[
+  ['doppelt','Wahrscheinlich doppelt abgerechnet','Beim selben Namen gibt es eine bezahlte Rechnung über denselben Betrag im selben Zeitraum, aber bei einem anderen Stripe-Kunden (doppelt angelegter Kunde oder doppeltes Abo). In Stripe prüfen und die doppelte Rechnung stornieren – nicht mahnen.','p-n'],
   ['persoenlich','Persönlich klären','Zahlungserinnerung und Mahnung sind raus, die Frist ist abgelaufen. Patient anrufen oder beim nächsten Termin ansprechen.','p-r'],
   ['mahnung','1. Mahnung senden','Die Zahlungserinnerung ist raus, die Frist von 14 Tagen ist abgelaufen. In thevea oder Medifox die Mahnung drucken, bei Club-Rechnungen (Stripe) die Rechnung in Stripe erneut senden.','p-a'],
   ['erinnerung','Zahlungserinnerung senden','Das Zahlungsziel von 4 Wochen ist überschritten. In thevea oder Medifox die Zahlungserinnerung drucken, bei Club-Rechnungen (Stripe) die Rechnung mit Zahlungslink aus Stripe erneut senden oder ein SEPA-Mandat einholen.','p-a'],
@@ -84,7 +85,7 @@ const STUFEN=[
 // „Tage“ = Tage seit dem Zahlungsziel (bzw. der Frist der letzten Erinnerung/Mahnung bei „Frist läuft“).
 const ALTER=[['1–30 Tage',0,30,'#C9A227'],['31–60 Tage',31,60,'#D9822B'],['61–90 Tage',61,90,'#C0573E'],['über 90 Tage',91,1e9,'#8E2A22']];
 function statistik(imOrt){
-  const l=L.liste.filter(imOrt),b=L.bezahlt_laut_bank.filter(imOrt),sum=a=>a.reduce((t,x)=>t+(x.offen||0),0),tage=x=>Math.max(0,x.tage||0);
+  const dop=L.liste.filter(imOrt).filter(x=>x.stufe==='doppelt'),l=L.liste.filter(imOrt).filter(x=>x.stufe!=='doppelt'),b=L.bezahlt_laut_bank.filter(imOrt),sum=a=>a.reduce((t,x)=>t+(x.offen||0),0),tage=x=>Math.max(0,x.tage||0);
   if(!l.length&&!b.length)return'';
   const ges=sum(l),k30=l.filter(x=>tage(x)>30),k90=l.filter(x=>tage(x)>90),aus=b.reduce((t,x)=>t+(x.bank_betrag||0),0);
   const pct=v=>ges?Math.round(v/ges*100)+' %':'—';
@@ -94,6 +95,7 @@ function statistik(imOrt){
   h+=`<div class="kpi"><div class="l">Über 90 Tage</div><div class="v" style="color:#8E2A22">${eur(sum(k90))}</div><div class="s"><b>${k90.length}</b> Rechnungen · persönlich klären oder abschreiben</div></div>`;
   h+=`<div class="kpi"><div class="l">Bezahlt, nur ausbuchen</div><div class="v" style="color:var(--green)">${eur(aus)}</div><div class="s"><b>${b.length}</b> Rechnungen laut Bank oder Stripe</div></div>`;
   h+='</div>';
+  if(dop.length)h+=`<p class="hint" style="margin-top:8px"><b>${dop.length} Rechnung${dop.length>1?'en':''} über ${eur(sum(dop))}</b> wahrscheinlich doppelt abgerechnet (nicht mitgezählt) – siehe „Wahrscheinlich doppelt abgerechnet“.</p>`;
   const zg=l.filter(x=>x.kandidat);
   if(zg.length)h+=`<p class="hint" style="margin-top:8px"><b>${zg.length} Rechnung${zg.length>1?'en':''} über ${eur(sum(zg))}</b>: Zahlung mit gleichem Betrag und Namen gefunden, aber ohne Rechnungsnummer – siehe „Zahlung gefunden – bitte prüfen“.</p>`;
   // Altersstruktur
@@ -116,7 +118,7 @@ function zeigen(){
   const passt=x=>(ort==='Alle'||x.standort===ort)&&(!q||String(x.patient).toLowerCase().includes(q)||String(x.nr).toLowerCase().includes(q));
   let h=statistik(x=>ort==='Alle'||x.standort===ort);
   h+=`<section class="sec"><div class="sec-h"><h2>So geht's</h2><span class="sub">Zahlungsziel 4 Wochen · Erinnerung · nach 14 Tagen Mahnung · nach weiteren 14 Tagen persönlich</span></div><div class="tk-steps">`;
-  STUFEN.slice(0,3).reverse().forEach(([s,t,d])=>{h+=`<div class="tk-step"><b>${esc(t)} · ${L.liste.filter(x=>x.stufe===s&&passt(x)).length}</b>${esc(d)}</div>`;});
+  STUFEN.filter(([s])=>['persoenlich','mahnung','erinnerung'].includes(s)).reverse().forEach(([s,t,d])=>{h+=`<div class="tk-step"><b>${esc(t)} · ${L.liste.filter(x=>x.stufe===s&&passt(x)).length}</b>${esc(d)}</div>`;});
   h+=`<div class="tk-step"><b>Bezahlt (Bank/Stripe) · ${L.bezahlt_laut_bank.filter(passt).length}</b>Überweisung oder Kartenzahlung ist da, die Rechnung steht im System noch offen. Im System als bezahlt buchen – bei Club-Rechnungen in Stripe: Rechnung öffnen → „Als bezahlt markieren“ (außerhalb von Stripe bezahlt).</div></div>`;
   h+=`<p class="hint">Haken setzen, wenn erledigt. Die Haken gelten nur auf diesem Gerät. Gemahnt wird in thevea oder Medifox, damit die Stufe dort gespeichert ist; Club-Rechnungen kommen aus Stripe (ohne SEPA-Mandat oder Einzug fehlgeschlagen) und werden dort erneut gesendet. Die Liste wird dreimal täglich neu erstellt.${L.fehlende_namen?` Bei ${L.fehlende_namen} Medifox-Rechnungen fehlt der Patientenname noch, dort über die Rechnungsnummer suchen.`:''}</p></section>`;
   // Zahlung ohne Rechnungsnummer gefunden (gleicher Betrag, Name passt): erst prüfen, dann ausbuchen
@@ -127,7 +129,7 @@ function zeigen(){
   STUFEN.forEach(([s,t,d,pc])=>{
     const l=L.liste.filter(x=>x.stufe===s&&passt(x));if(!l.length)return;
     h+=`<section class="sec"><div class="sec-h"><h2>${esc(t)}</h2><span class="sub">${l.length} Rechnung${l.length>1?'en':''} · ${eur(l.reduce((a,x)=>a+x.offen,0))}</span></div><div class="tbl-wrap"><table><thead><tr><th class="ck"></th><th>Patient</th><th>Rechnung</th><th>Art</th><th>Standort</th><th>Datum</th><th class="r">Überfällig</th><th class="r">Offen</th>${s==='wartet'?'<th>Frist bis</th>':''}</tr></thead><tbody>`;
-    l.forEach(x=>{const done=k[x.nr+'|'+s];h+=`<tr class="${done?'done':''}"><td class="ck"><input type="checkbox" ${done?'checked':''} onchange="erledigt('${esc(x.nr)}','${s}',this.checked)" title="erledigt"></td><td><b>${esc(x.patient||'—')}</b>${x.email?`<br><span class="c-m" style="font-size:12px">${esc(x.email)}</span>`:''}</td><td>${esc(x.nr)}<br><span class="c-m" style="font-size:12px">${esc(x.system)}${x.hinweis?' · '+esc(x.hinweis):''}</span>${x.kandidat?`<br><span class="pill p-g" style="font-size:11px">Zahlung vom ${dat(x.kandidat.am)} gefunden – prüfen</span>`:''}</td><td>${esc(x.art)}</td><td class="c-m">${esc(x.standort)}</td><td>${dat(x.datum)}</td><td class="r tk-n"><span class="pill ${pc}">${x.tage} Tage</span></td><td class="r tk-n"><b>${eur(x.offen)}</b>${x.teilzahlung_bank?`<br><span class="c-m" style="font-size:12px">Teilzahlung ${eur(x.teilzahlung_bank)}</span>`:''}</td>${s==='wartet'?`<td>${dat(x.frist)}</td>`:''}</tr>`;});
+    l.forEach(x=>{const done=k[x.nr+'|'+s];h+=`<tr class="${done?'done':''}"><td class="ck"><input type="checkbox" ${done?'checked':''} onchange="erledigt('${esc(x.nr)}','${s}',this.checked)" title="erledigt"></td><td><b>${esc(x.patient||'—')}</b>${x.email?`<br><span class="c-m" style="font-size:12px">${esc(x.email)}</span>`:''}</td><td>${esc(x.nr)}<br><span class="c-m" style="font-size:12px">${esc(x.system)}${x.hinweis?' · '+esc(x.hinweis):''}</span>${x.kandidat?`<br><span class="pill p-g" style="font-size:11px">Zahlung vom ${dat(x.kandidat.am)} gefunden – prüfen</span>`:''}</td><td>${esc(x.art)}</td><td class="c-m">${esc(x.standort)}</td><td>${dat(x.datum)}</td><td class="r tk-n">${x.tage==null?'—':`<span class="pill ${pc}">${x.tage} Tage</span>`}</td><td class="r tk-n"><b>${eur(x.offen)}</b>${x.teilzahlung_bank?`<br><span class="c-m" style="font-size:12px">Teilzahlung ${eur(x.teilzahlung_bank)}</span>`:''}</td>${s==='wartet'?`<td>${dat(x.frist)}</td>`:''}</tr>`;});
     h+='</tbody></table></div></section>';
   });
   const b=L.bezahlt_laut_bank.filter(passt);
