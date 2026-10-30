@@ -44,8 +44,8 @@ Mit Microsoft anmelden</button>
 
 <script>
 // Liest nur Controlling/Theke/mahnliste.json. Die Liste erzeugt der Bankabruf auf dem Mac
-// dreimal täglich (Rechnungen aus thevea und Medifox, Abgleich mit den Bankeingängen
-// und den Stripe-Kartenzahlungen der Theke).
+// dreimal täglich (Rechnungen aus thevea und Medifox, offene Club-Rechnungen aus Stripe,
+// Abgleich mit den Bankeingängen und den Stripe-Kartenzahlungen der Theke).
 const DRIVE='b!zgsNEKo9i02za4U_T3YWkHozjYkq7Z5PnXUOMXxU2mTsYCEji1-zTKOR1AXQWneL';
 const PFAD='12_Code/Controlling/Theke/mahnliste.json';
 const LR={scopes:['Files.Read','Sites.Read.All']};
@@ -72,8 +72,8 @@ async function laden(){
 }
 const STUFEN=[
   ['persoenlich','Persönlich klären','Zahlungserinnerung und Mahnung sind raus, die Frist ist abgelaufen. Patient anrufen oder beim nächsten Termin ansprechen.','p-r'],
-  ['mahnung','1. Mahnung senden','Die Zahlungserinnerung ist raus, die Frist von 14 Tagen ist abgelaufen. In thevea oder Medifox die Mahnung drucken.','p-a'],
-  ['erinnerung','Zahlungserinnerung senden','Das Zahlungsziel von 4 Wochen ist überschritten. In thevea oder Medifox die Zahlungserinnerung drucken.','p-a'],
+  ['mahnung','1. Mahnung senden','Die Zahlungserinnerung ist raus, die Frist von 14 Tagen ist abgelaufen. In thevea oder Medifox die Mahnung drucken, bei Club-Rechnungen (Stripe) die Rechnung in Stripe erneut senden.','p-a'],
+  ['erinnerung','Zahlungserinnerung senden','Das Zahlungsziel von 4 Wochen ist überschritten. In thevea oder Medifox die Zahlungserinnerung drucken, bei Club-Rechnungen (Stripe) die Rechnung mit Zahlungslink aus Stripe erneut senden oder ein SEPA-Mandat einholen.','p-a'],
   ['wartet','Frist läuft','Erinnerung oder Mahnung ist raus, die Frist läuft noch. Nichts zu tun.','p-n']
 ];
 function zeigen(){
@@ -84,11 +84,11 @@ function zeigen(){
   let h=`<section class="sec"><div class="sec-h"><h2>So geht's</h2><span class="sub">Zahlungsziel 4 Wochen · Erinnerung · nach 14 Tagen Mahnung · nach weiteren 14 Tagen persönlich</span></div><div class="tk-steps">`;
   STUFEN.slice(0,3).reverse().forEach(([s,t,d])=>{h+=`<div class="tk-step"><b>${esc(t)} · ${L.liste.filter(x=>x.stufe===s&&passt(x)).length}</b>${esc(d)}</div>`;});
   h+=`<div class="tk-step"><b>Bezahlt (Bank/Stripe) · ${L.bezahlt_laut_bank.filter(passt).length}</b>Überweisung oder Kartenzahlung ist da, die Rechnung steht im System noch offen. Im System als bezahlt buchen.</div></div>`;
-  h+=`<p class="hint">Haken setzen, wenn erledigt. Die Haken gelten nur auf diesem Gerät. Gemahnt wird in thevea oder Medifox, damit die Stufe dort gespeichert ist. Die Liste wird dreimal täglich neu erstellt.${L.fehlende_namen?` Bei ${L.fehlende_namen} Medifox-Rechnungen fehlt der Patientenname noch, dort über die Rechnungsnummer suchen.`:''}</p></section>`;
+  h+=`<p class="hint">Haken setzen, wenn erledigt. Die Haken gelten nur auf diesem Gerät. Gemahnt wird in thevea oder Medifox, damit die Stufe dort gespeichert ist; Club-Rechnungen kommen aus Stripe (ohne SEPA-Mandat oder Einzug fehlgeschlagen) und werden dort erneut gesendet. Die Liste wird dreimal täglich neu erstellt.${L.fehlende_namen?` Bei ${L.fehlende_namen} Medifox-Rechnungen fehlt der Patientenname noch, dort über die Rechnungsnummer suchen.`:''}</p></section>`;
   STUFEN.forEach(([s,t,d,pc])=>{
     const l=L.liste.filter(x=>x.stufe===s&&passt(x));if(!l.length)return;
     h+=`<section class="sec"><div class="sec-h"><h2>${esc(t)}</h2><span class="sub">${l.length} Rechnung${l.length>1?'en':''} · ${eur(l.reduce((a,x)=>a+x.offen,0))}</span></div><div class="tbl-wrap"><table><thead><tr><th class="ck"></th><th>Patient</th><th>Rechnung</th><th>Art</th><th>Standort</th><th>Datum</th><th class="r">Überfällig</th><th class="r">Offen</th>${s==='wartet'?'<th>Frist bis</th>':''}</tr></thead><tbody>`;
-    l.forEach(x=>{const done=k[x.nr+'|'+s];h+=`<tr class="${done?'done':''}"><td class="ck"><input type="checkbox" ${done?'checked':''} onchange="erledigt('${esc(x.nr)}','${s}',this.checked)" title="erledigt"></td><td><b>${esc(x.patient||'—')}</b>${x.email?`<br><span class="c-m" style="font-size:12px">${esc(x.email)}</span>`:''}</td><td>${esc(x.nr)}<br><span class="c-m" style="font-size:12px">${esc(x.system)}</span></td><td>${esc(x.art)}</td><td class="c-m">${esc(x.standort)}</td><td>${dat(x.datum)}</td><td class="r tk-n"><span class="pill ${pc}">${x.tage} Tage</span></td><td class="r tk-n"><b>${eur(x.offen)}</b>${x.teilzahlung_bank?`<br><span class="c-m" style="font-size:12px">Teilzahlung ${eur(x.teilzahlung_bank)}</span>`:''}</td>${s==='wartet'?`<td>${dat(x.frist)}</td>`:''}</tr>`;});
+    l.forEach(x=>{const done=k[x.nr+'|'+s];h+=`<tr class="${done?'done':''}"><td class="ck"><input type="checkbox" ${done?'checked':''} onchange="erledigt('${esc(x.nr)}','${s}',this.checked)" title="erledigt"></td><td><b>${esc(x.patient||'—')}</b>${x.email?`<br><span class="c-m" style="font-size:12px">${esc(x.email)}</span>`:''}</td><td>${esc(x.nr)}<br><span class="c-m" style="font-size:12px">${esc(x.system)}${x.hinweis?' · '+esc(x.hinweis):''}</span></td><td>${esc(x.art)}</td><td class="c-m">${esc(x.standort)}</td><td>${dat(x.datum)}</td><td class="r tk-n"><span class="pill ${pc}">${x.tage} Tage</span></td><td class="r tk-n"><b>${eur(x.offen)}</b>${x.teilzahlung_bank?`<br><span class="c-m" style="font-size:12px">Teilzahlung ${eur(x.teilzahlung_bank)}</span>`:''}</td>${s==='wartet'?`<td>${dat(x.frist)}</td>`:''}</tr>`;});
     h+='</tbody></table></div></section>';
   });
   const b=L.bezahlt_laut_bank.filter(passt);
