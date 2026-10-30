@@ -18,6 +18,11 @@
 tr.done td{opacity:.45;text-decoration:line-through}
 td.ck{width:28px}
 .tk-n{font-variant-numeric:tabular-nums}
+.tk-send{display:flex;gap:6px;flex-wrap:wrap}
+.tk-send button,.tk-send a{border:1px solid var(--border);background:var(--card,#fff);border-radius:8px;padding:5px 9px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;color:var(--dark);text-decoration:none;white-space:nowrap}
+.tk-send .wa{background:#25D366;border-color:#25D366;color:#fff}
+.tk-send .wa:hover{background:#1ebe5a}
+.tk-gesendet{font-size:11.5px;color:var(--green);margin-top:3px}
 .tk-alter{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--fill);margin:10px 0 6px}
 .tk-alter i{display:block;height:100%}
 .tk-leg{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
@@ -52,7 +57,8 @@ Mit Microsoft anmelden</button>
 // Abgleich mit den Bankeingängen und den Stripe-Kartenzahlungen der Theke).
 const DRIVE='b!zgsNEKo9i02za4U_T3YWkHozjYkq7Z5PnXUOMXxU2mTsYCEji1-zTKOR1AXQWneL';
 const PFAD='12_Code/Controlling/Theke/mahnliste.json';
-const LR={scopes:['Files.Read','Sites.Read.All']};
+const VPFAD='12_Code/Controlling/Theke/versand.json';   // gemeinsames Versandprotokoll
+const LR={scopes:['Files.Read','Sites.Read.All']},LW={scopes:['Files.ReadWrite']};
 const app=new msal.PublicClientApplication({auth:{clientId:'9fe9cda7-79c3-4d06-82dc-372715bb8086',authority:'https://login.microsoftonline.com/3e5c8d47-8ccc-42f6-877d-0d0e72972e39',redirectUri:location.origin+location.pathname.replace(/theke\.html$/,'')},cache:{cacheLocation:'localStorage'}});
 let L=null,ort='Alle';
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -62,7 +68,57 @@ const kv=()=>{try{return JSON.parse(localStorage.getItem('theke-erledigt')||'{}'
 function erledigt(nr,st,an){const k=kv();const key=nr+'|'+st;if(an)k[key]=new Date().toISOString().slice(0,10);else delete k[key];try{localStorage.setItem('theke-erledigt',JSON.stringify(k));}catch(e){}zeigen();}
 async function anmelden(){try{document.getElementById('er').style.display='none';const r=await app.loginPopup(LR);app.setActiveAccount(r.account);await laden();}catch(e){const er=document.getElementById('er');er.textContent='Anmeldung fehlgeschlagen: '+(e.message||e);er.style.display='block';}}
 function abmelden(){app.logoutPopup().then(()=>location.reload());}
-async function token(){const a=app.getActiveAccount();try{return(await app.acquireTokenSilent({...LR,account:a})).accessToken;}catch(e){return(await app.acquireTokenPopup(LR)).accessToken;}}
+async function token(sc){sc=sc||LR;const a=app.getActiveAccount();try{return(await app.acquireTokenSilent({...sc,account:a})).accessToken;}catch(e){return(await app.acquireTokenPopup(sc)).accessToken;}}
+const gpfad=p=>'https://graph.microsoft.com/v1.0/drives/'+DRIVE+'/root:/'+p.split('/').map(encodeURIComponent).join('/')+':';
+// ── Versand: WhatsApp bevorzugt, sonst E-Mail; Texte per Du, mit jeder Stufe bestimmter ──
+let VERS={};   // Rechnungsnummer → Einträge aus versand.json (live, auch nach dem letzten Listenlauf)
+async function versandLaden(){try{const r=await fetch(gpfad(VPFAD)+'/content',{cache:'no-store',headers:{Authorization:'Bearer '+await token()}});if(!r.ok){VERS={};return;}const j=JSON.parse((await r.text()).replace(/^\uFEFF/,''));VERS={};(j.eintraege||[]).forEach(e=>{(VERS[e.nr]=VERS[e.nr]||[]).push(e);});}catch(e){VERS={};}}
+async function versandSchreiben(eintrag){
+  const t=await token(LW);
+  for(let i=0;i<4;i++){
+    let etag=null,j={eintraege:[]};
+    const m=await fetch(gpfad(VPFAD),{cache:'no-store',headers:{Authorization:'Bearer '+t}});
+    if(m.ok){etag=(await m.json()).eTag;const c=await fetch(gpfad(VPFAD)+'/content',{cache:'no-store',headers:{Authorization:'Bearer '+t}});if(c.ok)j=JSON.parse((await c.text()).replace(/^\uFEFF/,''));}
+    j.eintraege=(j.eintraege||[]).concat([eintrag]);j.stand=new Date().toISOString();
+    const r=await fetch(gpfad(VPFAD)+'/content',{method:'PUT',headers:{Authorization:'Bearer '+t,'Content-Type':'application/json',...(etag?{'If-Match':etag}:{'If-None-Match':'*'})},body:JSON.stringify(j,null,1)});
+    if(r.ok)return true;
+    if(r.status!==412&&r.status!==409)throw new Error(r.status===403?'Kein Schreibrecht auf den Ordner „Theke“ – bitte die Praxisleitung fragen.':'Speichern fehlgeschlagen ('+r.status+')');
+  }
+  throw new Error('Speichern fehlgeschlagen, bitte nochmal versuchen.');
+}
+const plusT=n=>{const d=new Date();d.setDate(d.getDate()+n);return d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'});};
+function texte(x,art){
+  const hallo='Hallo'+(x.vorname?' '+x.vorname:'')+',',re=`deine Rechnung ${x.nr} vom ${dat(x.datum)} über ${eur(x.offen)}`;
+  const bank=`${x.empfaenger}, IBAN ${x.iban}, Verwendungszweck ${x.nr}`,gruss=`Viele Grüße\ndein Team von ${x.praxis}`;
+  const v=(VERS[x.nr]||[]).concat(x.versand||[]),erinnert=v.filter(e=>e.stufe==='erinnerung').map(e=>e.am).sort()[0];
+  if(art==='erinnerung')return{betreff:'Kurze Erinnerung: Rechnung '+x.nr,
+    text:`${hallo}\n\nkurze Erinnerung von uns 😊 Für ${re} ist bei uns noch keine Zahlung eingegangen – bestimmt einfach im Alltag untergegangen.\n\nÜberweise den Betrag gern an ${bank}.\n\nFalls du schon bezahlt hast, ignorier diese Nachricht einfach.\n\n${gruss}`};
+  if(art==='mahnung')return{betreff:'Zahlungserinnerung: Rechnung '+x.nr,
+    text:`${hallo}\n\nwir hatten dich${erinnert?' am '+dat(erinnert):''} schon an ${re} erinnert, die Zahlung ist aber noch nicht bei uns eingegangen.\n\nBitte überweise den offenen Betrag bis spätestens ${plusT(14)} an ${bank}.\n\nWenn es ein Problem gibt, sprich uns bitte an – dann finden wir gemeinsam eine Lösung.\n\n${gruss}`};
+  return{betreff:'Letzte Zahlungsaufforderung: Rechnung '+x.nr,
+    text:`${hallo}\n\n${re} ist trotz Erinnerung und Mahnung weiterhin offen.\n\nBitte überweise den Betrag bis spätestens ${plusT(7)} an ${bank} – oder melde dich kurz bei uns, falls etwas nicht stimmt.\n\nBitte hab Verständnis, dass wir die Rechnung sonst weiter verfolgen müssen.\n\n${gruss}`};
+}
+function waNr(t){let d=String(t||'').replace(/[^\d+]/g,'');if(d.startsWith('+'))d=d.slice(1);else if(d.startsWith('00'))d=d.slice(2);else if(d.startsWith('0'))d='49'+d.slice(1);return d.length>=10?d:'';}
+const ART_ZU_STUFE={erinnerung:'erinnerung',mahnung:'mahnung',persoenlich:'letzte'};
+function sendeKnoepfe(x,s){
+  const art=ART_ZU_STUFE[s];if(!art)return'';
+  const wa=waNr(x.mobil),lab={erinnerung:'Erinnerung',mahnung:'Mahnung',letzte:'Letzte Aufforderung'}[art];
+  let h='<div class="tk-send">';
+  if(wa)h+=`<button class="wa" onclick="senden('${esc(x.nr)}','${art}','whatsapp')" title="WhatsApp mit fertigem Text öffnen">WhatsApp · ${lab}</button>`;
+  if(x.email)h+=`<button onclick="senden('${esc(x.nr)}','${art}','email')" title="E-Mail mit fertigem Text öffnen">E-Mail${wa?'':' · '+lab}</button>`;
+  if(!wa&&!x.email)h+='<span class="c-m" style="font-size:12px">keine Handynummer/E-Mail</span>';
+  if(x.telefon||x.mobil)h+=`<a href="tel:${esc(String(x.mobil||x.telefon).replace(/[^\d+]/g,''))}" title="anrufen">📞</a>`;
+  return h+'</div>';
+}
+async function senden(nr,art,kanal){
+  const x=L.liste.find(y=>y.nr===nr);if(!x)return;const t=texte(x,art);
+  const url=kanal==='whatsapp'?'https://wa.me/'+waNr(x.mobil)+'?text='+encodeURIComponent(t.text):'mailto:'+encodeURIComponent(x.email)+'?subject='+encodeURIComponent(t.betreff)+'&body='+encodeURIComponent(t.text);
+  window.open(url,'_blank');
+  const a=app.getActiveAccount(),e={nr,stufe:art,am:new Date().toISOString().slice(0,10),zeit:new Date().toISOString(),kanal,von:(a&&(a.name||a.username))||'',betrag:x.offen,system:x.system};
+  try{await versandSchreiben(e);(VERS[nr]=VERS[nr]||[]).push(e);zeigen();}
+  catch(err){alert('Nachricht geöffnet, aber nicht im Protokoll gespeichert: '+(err.message||err)+'\nBitte den Haken setzen und der Praxisleitung Bescheid geben.');}
+}
+function gesendetZeile(x){const v=(VERS[x.nr]||[]);const l=v[v.length-1];if(!l)return'';return`<div class="tk-gesendet">✓ ${({erinnerung:'Erinnerung',mahnung:'Mahnung',letzte:'Letzte Aufforderung'})[l.stufe]||l.stufe} am ${dat(l.am)} per ${l.kanal==='whatsapp'?'WhatsApp':'E-Mail'}${l.von?' ('+esc(l.von.split(' ')[0])+')':''}</div>`;}
 async function laden(){
   document.getElementById('lo').style.display='none';document.getElementById('db').style.display='block';
   document.getElementById('page').innerHTML='<div class="empty">Lade Liste …</div>';
@@ -70,6 +126,7 @@ async function laden(){
     const r=await fetch('https://graph.microsoft.com/v1.0/drives/'+DRIVE+'/root:/'+PFAD.split('/').map(encodeURIComponent).join('/')+':/content',{cache:'no-store',headers:{Authorization:'Bearer '+await token()}});
     if(!r.ok)throw new Error(r.status===403||r.status===404?'Kein Zugriff auf die Liste. Bitte die Praxisleitung um Freigabe des Ordners „Theke“.':'Fehler '+r.status);
     L=JSON.parse((await r.text()).replace(/^﻿/,''));
+    await versandLaden();
     document.getElementById('stand').textContent='Stand '+new Date(L.stand).toLocaleString('de-DE',{dateStyle:'short',timeStyle:'short'});
     zeigen();
   }catch(e){document.getElementById('page').innerHTML='<div class="empty">'+esc(e.message||e)+'</div>';}
@@ -128,8 +185,8 @@ function zeigen(){
     h+='</tbody></table></div><p class="hint">Passt die Zahlung zur Rechnung, im System bzw. in Stripe als bezahlt buchen; sonst normal erinnern. Die Rechnungen stehen zusätzlich unten in ihrer Stufe.</p></section>';}
   STUFEN.forEach(([s,t,d,pc])=>{
     const l=L.liste.filter(x=>x.stufe===s&&passt(x));if(!l.length)return;
-    h+=`<section class="sec"><div class="sec-h"><h2>${esc(t)}</h2><span class="sub">${l.length} Rechnung${l.length>1?'en':''} · ${eur(l.reduce((a,x)=>a+x.offen,0))}</span></div><div class="tbl-wrap"><table><thead><tr><th class="ck"></th><th>Patient</th><th>Rechnung</th><th>Art</th><th>Standort</th><th>Datum</th><th class="r">Überfällig</th><th class="r">Offen</th>${s==='wartet'?'<th>Frist bis</th>':''}</tr></thead><tbody>`;
-    l.forEach(x=>{const done=k[x.nr+'|'+s];h+=`<tr class="${done?'done':''}"><td class="ck"><input type="checkbox" ${done?'checked':''} onchange="erledigt('${esc(x.nr)}','${s}',this.checked)" title="erledigt"></td><td><b>${esc(x.patient||'—')}</b>${x.email?`<br><span class="c-m" style="font-size:12px">${esc(x.email)}</span>`:''}</td><td>${esc(x.nr)}<br><span class="c-m" style="font-size:12px">${esc(x.system)}${x.hinweis?' · '+esc(x.hinweis):''}</span>${x.kandidat?`<br><span class="pill p-g" style="font-size:11px">Zahlung vom ${dat(x.kandidat.am)} gefunden – prüfen</span>`:''}</td><td>${esc(x.art)}</td><td class="c-m">${esc(x.standort)}</td><td>${dat(x.datum)}</td><td class="r tk-n">${x.tage==null?'—':`<span class="pill ${pc}">${x.tage} Tage</span>`}</td><td class="r tk-n"><b>${eur(x.offen)}</b>${x.teilzahlung_bank?`<br><span class="c-m" style="font-size:12px">Teilzahlung ${eur(x.teilzahlung_bank)}</span>`:''}</td>${s==='wartet'?`<td>${dat(x.frist)}</td>`:''}</tr>`;});
+    h+=`<section class="sec"><div class="sec-h"><h2>${esc(t)}</h2><span class="sub">${l.length} Rechnung${l.length>1?'en':''} · ${eur(l.reduce((a,x)=>a+x.offen,0))}</span></div><div class="tbl-wrap"><table><thead><tr><th class="ck"></th><th>Patient</th><th>Rechnung</th><th>Art</th><th>Standort</th><th>Datum</th><th class="r">Überfällig</th><th class="r">Offen</th>${s==='wartet'?'<th>Frist bis</th>':''}${ART_ZU_STUFE[s]?'<th>Senden</th>':''}</tr></thead><tbody>`;
+    l.forEach(x=>{const done=k[x.nr+'|'+s];h+=`<tr class="${done?'done':''}"><td class="ck"><input type="checkbox" ${done?'checked':''} onchange="erledigt('${esc(x.nr)}','${s}',this.checked)" title="erledigt"></td><td><b>${esc(x.patient||'—')}</b>${x.mobil?`<br><span class="c-m" style="font-size:12px">${esc(x.mobil)}</span>`:''}${x.email?`<br><span class="c-m" style="font-size:12px">${esc(x.email)}</span>`:''}${gesendetZeile(x)}</td><td>${esc(x.nr)}<br><span class="c-m" style="font-size:12px">${esc(x.system)}${x.hinweis?' · '+esc(x.hinweis):''}</span>${x.kandidat?`<br><span class="pill p-g" style="font-size:11px">Zahlung vom ${dat(x.kandidat.am)} gefunden – prüfen</span>`:''}</td><td>${esc(x.art)}</td><td class="c-m">${esc(x.standort)}</td><td>${dat(x.datum)}</td><td class="r tk-n">${x.tage==null?'—':`<span class="pill ${pc}">${x.tage} Tage</span>`}</td><td class="r tk-n"><b>${eur(x.offen)}</b>${x.teilzahlung_bank?`<br><span class="c-m" style="font-size:12px">Teilzahlung ${eur(x.teilzahlung_bank)}</span>`:''}</td>${s==='wartet'?`<td>${dat(x.frist)}</td>`:''}${ART_ZU_STUFE[s]?`<td>${sendeKnoepfe(x,s)}</td>`:''}</tr>`;});
     h+='</tbody></table></div></section>';
   });
   const b=L.bezahlt_laut_bank.filter(passt);
