@@ -442,7 +442,7 @@ function abgDaten(wo){
   ((D.re&&D.re.rows)||[]).forEach(r=>{
     if(!passt(r.jahr,r.month,r.datum)||!matchS(r.standort)||r.storno)return;
     const x=mk(RE,r.art,()=>({art:r.art,artName:r.artName,n:0,betrag:0,bezahlt:0}));x.n++;x.betrag+=r.brutto;x.bezahlt+=r.bezahlt;
-    const mo=mon(r.month),m=mk(M,r.standort+'|'+mo,()=>mAgg(r.standort,mo));
+    const mo=mon(r.month),m=mk(M,r.standort+'|'+mo,()=>mAgg(r.standort,mo));if(!m.quelle)m.quelle='thevea';
     if(r.art==='privat'||r.art==='selbstzahler'){const p=Math.min(r.brutto,Math.max(0,m.gkv));m.privat+=r.brutto;m.privatN++;m.gkv-=p;}
     else if(r.art==='ausfall')m.ausfall+=r.brutto;
   });
@@ -478,7 +478,8 @@ function abgDaten(wo){
   // (Woche: thevea-Kalenderzeilen mit Datum in der Woche, auch über den Monatsrand;
   // auch ohne Abrechnung in der Woche, weil thevea gesammelt abrechnet)
   (wo?D.raw.filter(r=>r.src==='thevea'&&tvRowPasst(r,theraNames)&&inWo(pad(r.dateKey))):erbrachtZeilen()).forEach(r=>{
-    const mo=mon(r.month),m=wo?mk(M,r.standort+'|'+mo,()=>Object.assign(mAgg(r.standort,mo),{quelle:'thevea'})):M[r.standort+'|'+mo];
+    const mo=mon(r.month),m=wo?mk(M,r.standort+'|'+mo,()=>mAgg(r.standort,mo)):M[r.standort+'|'+mo];
+    if(m&&wo&&!m.quelle)m.quelle='thevea';
     if(m&&m.quelle==='thevea')m.kalender+=r.price;
   });
   // thevea rechnet gesammelt ab: Offen als Kalender minus Abrechnung ergibt nur über Monate Sinn
