@@ -475,8 +475,12 @@ function abgDaten(wo){
   });
   Object.values(M).forEach(m=>{if(m.quelle==='medifox')m.netto=m.brutto-m.zuz;});
   // Kalenderwert (Seite Erbracht) für thevea-Monate als Bezugsgröße
-  // (Woche: thevea-Kalenderzeilen mit Datum in der Woche, auch über den Monatsrand)
-  (wo?D.raw.filter(r=>r.src==='thevea'&&tvRowPasst(r,theraNames)&&inWo(pad(r.dateKey))):erbrachtZeilen()).forEach(r=>{const m=M[r.standort+'|'+mon(r.month)];if(m&&m.quelle==='thevea')m.kalender+=r.price;});
+  // (Woche: thevea-Kalenderzeilen mit Datum in der Woche, auch über den Monatsrand;
+  // auch ohne Abrechnung in der Woche, weil thevea gesammelt abrechnet)
+  (wo?D.raw.filter(r=>r.src==='thevea'&&tvRowPasst(r,theraNames)&&inWo(pad(r.dateKey))):erbrachtZeilen()).forEach(r=>{
+    const mo=mon(r.month),m=wo?mk(M,r.standort+'|'+mo,()=>Object.assign(mAgg(r.standort,mo),{quelle:'thevea'})):M[r.standort+'|'+mo];
+    if(m&&m.quelle==='thevea')m.kalender+=r.price;
+  });
   // thevea rechnet gesammelt ab: Offen als Kalender minus Abrechnung ergibt nur über Monate Sinn
   Object.values(M).forEach(m=>{if(m.quelle==='thevea'){m.offen=wo?0:Math.max(0,m.kalender-m.brutto);}else{m.kalender=m.erbMedifox||0;}});
   return{months,monthNums,M:Object.values(M),P:Object.values(P),RE:Object.values(RE)};
