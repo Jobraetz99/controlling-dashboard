@@ -772,7 +772,8 @@ const BWA_ENT=[{k:'bwaK',pl:'planK',l:'KIMOJO GmbH',sub:'Physio und Ergo · Wern
 function bwaToggle(id){const el=document.getElementById(id);if(el)el.style.display=el.style.display==='none'?'':'none';}
 function bwaSumme(bwa,months){
   const S={z:{},kat:{},umsatz:{},monate:[],fehlt:[]};
-  months.forEach(m=>{const d=getBWA(bwa,m);if(!d||!d.voll){S.fehlt.push(m);return;}S.monate.push(m);
+  S.geschaetzt=[];
+  months.forEach(m=>{const d=getBWA(bwa,m);if(!d||!d.voll){S.fehlt.push(m);return;}S.monate.push(m);const bl=(getBWAMonths(bwa).find(x=>x.month===m)||{}).sheet||'';if(/gesch[äa]tzt/i.test(bl))S.geschaetzt.push(m);
     Object.entries(d.voll.z).forEach(([c,x])=>{const a=S.z[c]||(S.z[c]={n:x.n,ist:0,plan:0,pm:0});a.ist+=x.ist;a.plan+=x.plan;if(x.plan)a.pm++;});
     d.voll.kat.forEach(k=>{const a=S.kat[k.code]||(S.kat[k.code]={code:k.code,n:k.n,ist:0,plan:0,pm:0,items:{}});a.ist+=k.ist;a.plan+=k.plan;if(k.plan)a.pm++;k.items.forEach(i=>{const b=a.items[i.konto+'|'+i.n]||(a.items[i.konto+'|'+i.n]={konto:i.konto,n:i.n,ist:0,plan:0});b.ist+=i.ist;b.plan+=i.plan;});});
     d.voll.umsatz.forEach(i=>{const b=S.umsatz[i.konto+'|'+i.n]||(S.umsatz[i.konto+'|'+i.n]={konto:i.konto,n:i.n,ist:0,plan:0});b.ist+=i.ist;b.plan+=i.plan;});
@@ -802,7 +803,7 @@ function pBwa(){
   h+=`<div class="kpi"><div class="l">Umsatzrendite</div><div class="v ${marge==null?'':marge>=20?'c-g':marge>=10?'c-a':'c-r'}">${pctS(marge)}</div><div class="s">Ergebnis vor Steuern ÷ Umsatz · Betriebsergebnis ${eur0(tot.betrieb)}</div></div>`;
   h+='</div>';
   if(data.length>1)h+='<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Betrieb</th><th>BWA-Monate</th><th class="r">Umsatz</th><th class="r">Personal</th><th class="r">Gesamtkosten</th><th class="r">Ergebnis v. St.</th><th class="r">Rendite</th><th class="r">Personalquote</th></tr></thead><tbody>'+data.map(({e,S})=>{const u=z(S,'1006'),k=z(S,'1294'),p=z(S,'1164'),g=z(S,'1374');return`<tr><td><span class="site"><span class="dot" style="background:${e.col}"></span>${esc(e.l)}</span></td><td class="c-m">${S.monate.length?S.monate.join(', '):'—'}</td><td class="r"><b>${eur0(u)}</b></td><td class="r">${eur0(p)}</td><td class="r">${eur0(k)}</td><td class="r ${g>=0?'c-g':'c-r'}"><b>${eur0(g)}</b></td><td class="r">${pctS(u?g/u*100:null)}</td><td class="r">${pctS(u?p/u*100:null)}</td></tr>`;}).join('')+'</tbody></table></div>';
-  h+=`<p class="hint">Quelle: DATEV-BWA (Soll-/Ist-Vergleich) je Monatsblatt, BWA KIMOJO.xlsx und BWA PHFIP.xlsx. Die Kacheln vergleichen mit der internen Planung (Dashboard-Plan Therapie + Club wie auf Plan vs. Ist, nur für Monate mit BWA); die Kostenarten unten mit der Plan-Spalte der BWA selbst, sofern jeder BWA-Monat einen Plan trägt.${fehlt.length?` Ohne BWA im Zeitraum: ${esc(fehlt.join(', '))}.`:''}</p></section>`;
+  h+=`<p class="hint">Quelle: DATEV-BWA (Soll-/Ist-Vergleich) je Monatsblatt, BWA KIMOJO.xlsx und BWA PHFIP.xlsx. Die Kacheln vergleichen mit der internen Planung (Dashboard-Plan Therapie + Club wie auf Plan vs. Ist, nur für Monate mit BWA); die Kostenarten unten mit der Plan-Spalte der BWA selbst, sofern jeder BWA-Monat einen Plan trägt.${fehlt.length?` Ohne BWA im Zeitraum: ${esc(fehlt.join(', '))}.`:''}${data.some(x=>x.S.geschaetzt.length)?` <b>Geschätzt</b> (Jahreswert laut nächster BWA minus Jahreswert der letzten BWA minus Monat, bei zwei Monaten je zur Hälfte, bis die echte BWA vorliegt): ${esc(data.filter(x=>x.S.geschaetzt.length).map(x=>x.e.l+' '+x.S.geschaetzt.join(', ')).join(' · '))}.`:''}</p></section>`;
   // Je Betrieb: Erfolgsrechnung und Kostenarten mit Konten
   let uid=0;
   data.forEach(({e,S})=>{
