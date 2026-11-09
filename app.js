@@ -189,51 +189,109 @@ function secAnfragen(){
   return h+'</section>';
 }
 
-// 3a · Club-Bestand jetzt: Mitglieder und Präventionskurse aus den CRM-Gruppen
-//      (mgLaden), neu in den letzten 7 Tagen aus dem Gruppenverlauf. Solange es
-//      noch keinen Stand von vor 7 Tagen gibt, stehen dort die Abschlüsse aus den
-//      Gesprächen der letzten 7 Tage – mit Hinweis, woher die Zahl kommt.
-function clubBestand(){
+// 3 · Club: Bestand und Abschlüsse folgen einer gemeinsamen Auswahl – der
+//     Zeitraum oben, eine Kalenderwoche oder ein Tag (Pfeile, höchstens bis heute).
+let clubModus='zeitraum',clubTag=null;      // clubTag: gewählter Tag (Woche: ein Tag der Woche)
+function setClub(m){clubModus=m;clubTag=clubTag||ymdP(heute());rClub();}
+function clubSchritt(n){const d=plusTage(ausYmd(clubTag),clubModus==='woche'?7*n:n);if(ymdP(d)>ymdP(heute())||d.getFullYear()<cockpitJahr())return;clubTag=ymdP(d);rClub();}
+function rClub(){const el=document.getElementById('secClub');if(el)el.outerHTML=secClub();}
+// Gewählter Abschnitt {von, bis, vorVon, vorBis, label, vorLabel} als Date (bis höchstens heute)
+function clubSpanne(){
+  if(clubModus==='zeitraum')return null;
+  const h0=heute(),t=ausYmd(clubTag);
+  if(clubModus==='tag')return{von:t,bis:t,vorVon:plusTage(t,-1),vorBis:plusTage(t,-1),label:fDat(t),vorLabel:'Vortag',was:'am Tag'};
+  const mo=montag(t),so=plusTage(mo,6),bis=so>h0?h0:so,dm=d=>d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'});
+  return{von:mo,bis,vorVon:plusTage(mo,-7),vorBis:plusTage(mo,-1),label:`KW ${tvWoche(mo)} · ${dm(mo)}–${dm(so)}`,vorLabel:'Vorwoche',was:'in der Woche',laeuft:so>h0};
+}
+function clubWahl(){
+  const sp=clubSpanne(),h0=ymdP(heute());
+  const pf=(n,ok)=>`<button class="btn" style="padding:2px 9px;font-size:15px;line-height:1.2${ok?'':';opacity:.35;cursor:default'}" ${ok?`onclick="clubSchritt(${n})"`:'disabled'} aria-label="${n<0?'zurück':'weiter'}">${n<0?'‹':'›'}</button>`;
+  const weiter=sp&&ymdP(clubModus==='woche'?plusTage(montag(sp.von),7):plusTage(sp.von,1))<=h0;
+  return`<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><div class="seg">${[['zeitraum','Zeitraum'],['woche','Woche'],['tag','Tag']].map(([m,l])=>`<button class="${clubModus===m?'a':''}" onclick="setClub('${m}')">${l}</button>`).join('')}</div>${sp?`${pf(-1,true)}<b style="font-size:13px">${esc(sp.label)}</b>${pf(1,weiter)}`:''}</div>`;
+}
+// Gruppen-Stand eines Clubs am Ende eines Tages: heute = aktueller Stand, sonst
+// Tagesdatei im Verlauf (erst seit 29.10.2026). undefined = lädt noch, null = kein Stand.
+const MG_TAG={},MG_ORDNER={};
+function mgStandAm(o,ymd){
+  if(ymd===ymdP(heute()))return D.mg[o].gruppen;
+  const k=o+'|'+ymd;if(k in MG_TAG)return MG_TAG[k]==='lädt'?undefined:MG_TAG[k];
+  MG_TAG[k]='lädt';
+  const basis=MW_DIR+o+'/Gruppen/Verlauf/'+ymd.slice(0,7)+'/';
+  (MG_ORDNER[basis]=MG_ORDNER[basis]||graphKinder(basis).catch(()=>[])).then(async d=>{
+    d=d.filter(f=>f.file&&/\.json$/i.test(f.name)&&f.name.startsWith(ymd.slice(8,10)+' '));
+    const g=(await Promise.all(d.map(f=>graphText(basis+f.name).catch(()=>null)))).map(mgParse).filter(Boolean);
+    MG_TAG[k]=g.length?g:null;rClub();});
+  return undefined;
+}
+
+// 3a · Club-Bestand: Mitglieder und Präventionskurse aus den CRM-Gruppen (mgLaden).
+//      Zeitraum: jetzt und neu in den letzten 7 Tagen (Gruppenverlauf; solange es
+//      keinen Stand von vor 7 Tagen gibt, die Abschlüsse aus den Gesprächen).
+//      Woche/Tag: Stand am Ende des Abschnitts gegen das Ende des Abschnitts davor.
+function clubBestand(wahl){
   const orte=Object.keys(D.mg||{}).filter(o=>mwPasst({standort:o})).sort();
   if(!orte.length)return '';
-  const v7=plusTage(heute(),-7),mw7=(D.mw||[]).filter(mwPasst).filter(e=>e.dt>=v7);
-  const zeilen=orte.map(o=>{const q=D.mg[o];const r={o,stand:q.stand,verlauf:!!q.vorher};
-    ['club','praev'].forEach(a=>{const jetzt=mgKoepfe(q.gruppen,a);r[a]=jetzt.n;
-      if(q.vorher){const alt=mgKoepfe(q.vorher,a).ids;r[a+'Neu']=[...jetzt.ids].filter(i=>!alt.has(i)).length;r[a+'Raus']=[...alt].filter(i=>!jetzt.ids.has(i)).length;}
-      else r[a+'Neu']=mw7.filter(e=>e.standort===o&&(a==='club'?e.erg==='club':e.erg==='praev8'||e.erg==='praev16')).length;});
-    return r;});
+  const sp=clubSpanne();
+  let zeilen,laedt=false;
+  if(sp){
+    const ende=ymdP(sp.bis),vor=ymdP(sp.vorBis);
+    zeilen=orte.map(o=>{const jetzt=mgStandAm(o,ende),alt=mgStandAm(o,vor),r={o,verlauf:!!alt};
+      if(jetzt===undefined||alt===undefined)laedt=true;
+      if(!jetzt){r.leer=true;return r;}
+      ['club','praev'].forEach(a=>{const j=mgKoepfe(jetzt,a);r[a]=j.n;
+        if(alt){const ai=mgKoepfe(alt,a).ids;r[a+'Neu']=[...j.ids].filter(i=>!ai.has(i)).length;r[a+'Raus']=[...ai].filter(i=>!j.ids.has(i)).length;}});
+      return r;});
+  }else{
+    const v7=plusTage(heute(),-7),mw7=(D.mw||[]).filter(mwPasst).filter(e=>e.dt>=v7);
+    zeilen=orte.map(o=>{const q=D.mg[o];const r={o,stand:q.stand,verlauf:!!q.vorher};
+      ['club','praev'].forEach(a=>{const jetzt=mgKoepfe(q.gruppen,a);r[a]=jetzt.n;
+        if(q.vorher){const alt=mgKoepfe(q.vorher,a).ids;r[a+'Neu']=[...jetzt.ids].filter(i=>!alt.has(i)).length;r[a+'Raus']=[...alt].filter(i=>!jetzt.ids.has(i)).length;}
+        else r[a+'Neu']=mw7.filter(e=>e.standort===o&&(a==='club'?e.erg==='club':e.erg==='praev8'||e.erg==='praev16')).length;});
+      return r;});
+  }
   const S=k=>zeilen.reduce((t,r)=>t+(r[k]||0),0),alleVerlauf=zeilen.every(r=>r.verlauf);
   const stand=zeilen.map(r=>r.stand).filter(Boolean).sort().slice(-1)[0];
-  const neuS=a=>alleVerlauf?`neu in 7 Tagen <b>+${n0(S(a+'Neu'))}</b> · nicht mehr dabei <b>${n0(S(a+'Raus'))}</b>`:`Abschlüsse letzte 7 Tage <b>${n0(S(a+'Neu'))}</b>`;
-  let h=`<section class="sec"><div class="sec-h"><h2>Club-Bestand</h2><span class="sub">jetzt · MyWellness-Gruppen${stand?' · Stand '+esc(new Date(stand).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}))+' Uhr':''}</span></div>`;
+  const wann=sp?(clubModus==='tag'?'am Tag':'in der Woche'):'in 7 Tagen';
+  const neuS=a=>alleVerlauf?`neu ${wann} <b>+${n0(S(a+'Neu'))}</b> · nicht mehr dabei <b>${n0(S(a+'Raus'))}</b>`:sp?`kein Vergleichsstand (${esc(sp.vorLabel)})`:`Abschlüsse letzte 7 Tage <b>${n0(S(a+'Neu'))}</b>`;
+  const sub=sp?`Stand ${ymdP(sp.bis)===ymdP(heute())?'jetzt':'Ende '+esc(fDat(sp.bis))} · MyWellness-Gruppen`:`jetzt · MyWellness-Gruppen${stand?' · Stand '+esc(new Date(stand).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}))+' Uhr':''}`;
+  let h=`<section class="sec"><div class="sec-h"><h2>Club-Bestand</h2><span class="sub">${sub}</span>${wahl}</div>`;
+  if(sp&&zeilen.every(r=>r.leer))return h+`<div class="empty">${laedt?'Gruppenstand wird geladen …':'Für diesen Tag gibt es keinen Gruppenstand – der Verlauf wird erst seit dem 29.10.2026 mitgeschrieben.'}</div></section>`;
+  const neuL=sp?(clubModus==='tag'?'Neu am Tag':'Neu in der Woche'):'Neu letzte 7 Tage';
   h+='<div class="grid">'+
     `<div class="kpi"><div class="l">Club-Mitglieder</div><div class="v c-g">${n0(S('club'))}</div><div class="s">${neuS('club')}</div></div>`+
     `<div class="kpi"><div class="l">In Präventionskursen</div><div class="v">${n0(S('praev'))}</div><div class="s">${neuS('praev')}</div></div>`+
-    `<div class="kpi"><div class="l">Neu letzte 7 Tage</div><div class="v">${n0(S('clubNeu')+S('praevNeu'))}</div><div class="s">Club <b>${n0(S('clubNeu'))}</b> · Prävention <b>${n0(S('praevNeu'))}</b>${alleVerlauf?'':' · aus den Gesprächen'}</div></div>`+
+    `<div class="kpi"><div class="l">${neuL}</div><div class="v">${alleVerlauf||!sp?n0(S('clubNeu')+S('praevNeu')):'—'}</div><div class="s">Club <b>${n0(S('clubNeu'))}</b> · Prävention <b>${n0(S('praevNeu'))}</b>${alleVerlauf||sp?'':' · aus den Gesprächen'}</div></div>`+
     '</div>';
   if(orte.length>1){
-    h+=`<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Club</th><th class="r">Mitglieder</th><th class="r">Präventionskurse</th><th class="r">Neu Club (7 Tage)</th><th class="r">Neu Prävention (7 Tage)</th></tr></thead><tbody>${zeilen.map(r=>`<tr><td>${esc(r.o)}</td><td class="r"><b>${n0(r.club)}</b></td><td class="r"><b>${n0(r.praev)}</b></td><td class="r">${n0(r.clubNeu)}</td><td class="r">${n0(r.praevNeu)}</td></tr>`).join('')}<tr class="sum"><td>Summe</td><td class="r">${n0(S('club'))}</td><td class="r">${n0(S('praev'))}</td><td class="r">${n0(S('clubNeu'))}</td><td class="r">${n0(S('praevNeu'))}</td></tr></tbody></table></div>`;
+    const nl=sp?(clubModus==='tag'?'Tag':'Woche'):'7 Tage';
+    h+=`<div class="tbl-wrap" style="margin-top:14px"><table><thead><tr><th>Club</th><th class="r">Mitglieder</th><th class="r">Präventionskurse</th><th class="r">Neu Club (${nl})</th><th class="r">Neu Prävention (${nl})</th></tr></thead><tbody>${zeilen.map(r=>r.leer?`<tr><td>${esc(r.o)}</td><td class="r c-m" colspan="4">kein Stand</td></tr>`:`<tr><td>${esc(r.o)}</td><td class="r"><b>${n0(r.club)}</b></td><td class="r"><b>${n0(r.praev)}</b></td><td class="r">${r.verlauf||!sp?n0(r.clubNeu):'—'}</td><td class="r">${r.verlauf||!sp?n0(r.praevNeu):'—'}</td></tr>`).join('')}<tr class="sum"><td>Summe</td><td class="r">${n0(S('club'))}</td><td class="r">${n0(S('praev'))}</td><td class="r">${n0(S('clubNeu'))}</td><td class="r">${n0(S('praevNeu'))}</td></tr></tbody></table></div>`;
   }
-  h+=`<p class="hint">Personen in den CRM-Gruppen, wie im Verantwortlichen-Dashboard: Club = Gruppen mit „Smart“ oder „Starter“ im Namen, Prävention = Gruppen mit „Präventionskurs“; wer in zwei Gruppen steht, zählt einmal. Andere Gruppen (z. B. 12/24 Monate Mitgliedschaft, T-Rena, RVF) zählen nicht. ${alleVerlauf?'Neu = in den Gruppen, aber nicht im Stand von vor 7 Tagen.':'Der Gruppenverlauf wird erst seit dem 29.10.2026 mitgeschrieben; bis es einen Stand von vor 7 Tagen gibt, zeigt „neu“ die Abschlüsse aus den Gesprächen der letzten 7 Tage.'}</p>`;
+  const verglText=sp?(clubModus==='tag'?'Neu = am Ende des Tages in den Gruppen, am Ende des Vortags noch nicht.':'Neu = am Ende der Woche in den Gruppen (laufende Woche: jetzt), am Sonntag davor noch nicht.')+' Der Gruppenverlauf beginnt am 29.10.2026.'
+    :alleVerlauf?'Neu = in den Gruppen, aber nicht im Stand von vor 7 Tagen.':'Der Gruppenverlauf wird erst seit dem 29.10.2026 mitgeschrieben; bis es einen Stand von vor 7 Tagen gibt, zeigt „neu“ die Abschlüsse aus den Gesprächen der letzten 7 Tage.';
+  h+=`${laedt?'<p class="hint">Gruppenstand wird geladen …</p>':''}<p class="hint">Personen in den CRM-Gruppen, wie im Verantwortlichen-Dashboard: Club = Gruppen mit „Smart“ oder „Starter“ im Namen, Prävention = Gruppen mit „Präventionskurs“; wer in zwei Gruppen steht, zählt einmal. Andere Gruppen (z. B. 12/24 Monate Mitgliedschaft, T-Rena, RVF) zählen nicht. ${verglText} Zeitraum, Woche oder Tag gelten für Bestand und Abschlüsse.</p>`;
   return h+'</section>';
 }
 
-// 3 · Club-Abschlüsse aus den MyWellness-Gesprächen (1.–3. Gespräch).
+// 3b · Club-Abschlüsse aus den MyWellness-Gesprächen (1.–3. Gespräch).
 function secClub(){
-  const mw=(D.mw||[]).filter(mwPasst);
-  const months=getActiveMonths(),monthNums=months.map(m=>MN.indexOf(m)+1),jahr=cockpitJahr();
-  const zr=mw.filter(e=>e.dt.getFullYear()===jahr&&monthNums.includes(e.dt.getMonth()+1));
-  const mo=montag(heute()),wo=mw.filter(e=>e.dt>=mo);
+  const mw=(D.mw||[]).filter(mwPasst),sp=clubSpanne(),wahl=clubWahl();
+  const imAbschnitt=(von,bis)=>{const b=plusTage(bis,1);return mw.filter(e=>e.dt>=von&&e.dt<b);};
+  let zr,wo;
+  if(sp){zr=imAbschnitt(sp.von,sp.bis);wo=imAbschnitt(sp.vorVon,sp.vorBis);}
+  else{const monthNums=getActiveMonths().map(m=>MN.indexOf(m)+1),jahr=cockpitJahr();
+    zr=mw.filter(e=>e.dt.getFullYear()===jahr&&monthNums.includes(e.dt.getMonth()+1));wo=mw.filter(e=>e.dt>=montag(heute()));}
   const c=(arr,...ks)=>arr.filter(e=>ks.includes(e.erg)).length;
-  let h=clubBestand();
-  h+=`<section class="sec"><div class="sec-h"><h2>Club-Abschlüsse</h2><span class="sub">${esc(zeitraumLabel())} · Gespräche nach Rezeptende</span></div>`;
-  if(!mw.length)return h+'<div class="empty">Noch keine MyWellness-Gespräche für die aktuelle Auswahl.</div></section>';
+  const wL=sp?sp.vorLabel:'diese Woche';
+  const best=clubBestand(wahl);
+  let h='<div id="secClub">'+best;
+  h+=`<section class="sec"><div class="sec-h"><h2>Club-Abschlüsse</h2><span class="sub">${esc(sp?sp.label:zeitraumLabel())} · Gespräche nach Rezeptende</span>${best?'':wahl}</div>`;
+  if(!mw.length)return h+'<div class="empty">Noch keine MyWellness-Gespräche für die aktuelle Auswahl.</div></section></div>';
   const ab=zr.filter(e=>e.ab).length,quote=zr.length?ab/zr.length*100:null;
   h+='<div class="grid">'+
-    `<div class="kpi"><div class="l">Club-Mitgliedschaften</div><div class="v c-g">${n0(c(zr,'club'))}</div><div class="s">diese Woche <b>${n0(c(wo,'club'))}</b></div></div>`+
-    `<div class="kpi"><div class="l">Präventionskurse</div><div class="v">${n0(c(zr,'praev8','praev16'))}</div><div class="s">8 Wochen <b>${n0(c(zr,'praev8'))}</b> · 16 Wochen <b>${n0(c(zr,'praev16'))}</b> · diese Woche <b>${n0(c(wo,'praev8','praev16'))}</b></div></div>`+
-    `<div class="kpi"><div class="l">T-RENA · R+V Fit</div><div class="v">${n0(c(zr,'trena'))} · ${n0(c(zr,'rv'))}</div><div class="s">diese Woche <b>${n0(c(wo,'trena'))}</b> · <b>${n0(c(wo,'rv'))}</b></div></div>`+
-    `<div class="kpi"><div class="l">Gespräche</div><div class="v">${n0(zr.length)}</div><div class="s">Abschlussquote <b>${pctS(quote)}</b> · Folgegespräch offen <b>${n0(c(zr,'folgeg'))}</b></div></div>`+
+    `<div class="kpi"><div class="l">Club-Mitgliedschaften</div><div class="v c-g">${n0(c(zr,'club'))}</div><div class="s">${wL} <b>${n0(c(wo,'club'))}</b></div></div>`+
+    `<div class="kpi"><div class="l">Präventionskurse</div><div class="v">${n0(c(zr,'praev8','praev16'))}</div><div class="s">8 Wochen <b>${n0(c(zr,'praev8'))}</b> · 16 Wochen <b>${n0(c(zr,'praev16'))}</b> · ${wL} <b>${n0(c(wo,'praev8','praev16'))}</b></div></div>`+
+    `<div class="kpi"><div class="l">T-RENA · R+V Fit</div><div class="v">${n0(c(zr,'trena'))} · ${n0(c(zr,'rv'))}</div><div class="s">${wL} <b>${n0(c(wo,'trena'))}</b> · <b>${n0(c(wo,'rv'))}</b></div></div>`+
+    `<div class="kpi"><div class="l">Gespräche</div><div class="v">${n0(zr.length)}</div><div class="s">Abschlussquote <b>${pctS(quote)}</b> · Folgegespräch offen <b>${n0(c(zr,'folgeg'))}</b>${sp?` · ${sp.vorLabel} <b>${n0(wo.length)}</b>`:''}</div></div>`+
     '</div>';
   if(aS==='Alle'){
     const orte=[...new Set(mw.map(e=>e.standort))].sort();
@@ -241,8 +299,8 @@ function secClub(){
     orte.forEach(o=>{const z=zr.filter(e=>e.standort===o);const a=z.filter(e=>e.ab).length;h+=`<tr><td>${esc(o||'ohne Standort')}</td><td class="r">${n0(z.length)}</td><td class="r"><b>${n0(c(z,'club'))}</b></td><td class="r">${n0(c(z,'praev8','praev16'))}</td><td class="r">${n0(c(z,'trena'))}</td><td class="r">${n0(c(z,'rv'))}</td><td class="r">${pctS(z.length?a/z.length*100:null)}</td></tr>`;});
     h+='</tbody></table></div>';
   }
-  h+='<p class="hint">Quelle: MyWellness-Exporte unter Controlling/MyWellness, je Person und Gesprächsstufe der jüngste Stand. Club zählt als Abschluss; Kurse, T-RENA und R+V sind Stationen auf dem Weg dorthin.</p>';
-  return h+'</section>';
+  h+=`<p class="hint">Quelle: MyWellness-Exporte unter Controlling/MyWellness, je Person und Gesprächsstufe der jüngste Stand, gezählt am Gesprächsdatum. Club zählt als Abschluss; Kurse, T-RENA und R+V sind Stationen auf dem Weg dorthin.${sp?` Klein daneben: ${sp.vorLabel}.`:''}</p>`;
+  return h+'</section></div>';
 }
 
 // 4 · Auslastung je Tag und Standort.
