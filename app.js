@@ -445,6 +445,10 @@ function abgMedifoxArt(r){
 let abgKW=null;// gewählte Woche (Montag yyyy-mm-dd), null = ganzer Zeitraum
 let abgWLaedt=false;
 function setAbgKW(v){abgKW=v||null;rPage();}
+// „Aktualisieren“ lädt nur die Grunddaten neu; die erst beim Öffnen nachgeladenen
+// thevea-Wochenwerte und Club-Tagesstände hier verwerfen, damit sie frisch kommen.
+const refreshGrund=refreshData;
+refreshData=async function(){delete D.abgW;for(const k in MG_TAG)delete MG_TAG[k];for(const k in MG_ORDNER)delete MG_ORDNER[k];await refreshGrund();};
 async function abgWochenLaden(){
   if(D.abgW||abgWLaedt)return;abgWLaedt=true;
   const rows=[],wochen=new Set();
@@ -535,7 +539,7 @@ function abgDaten(wo){
   // Kalenderwert (Seite Erbracht) für thevea-Monate als Bezugsgröße
   // (Woche: thevea-Kalenderzeilen mit Datum in der Woche, auch über den Monatsrand;
   // auch ohne Abrechnung in der Woche, weil thevea gesammelt abrechnet)
-  (wo?D.raw.filter(r=>r.src==='thevea'&&tvRowPasst(r,theraNames)&&inWo(pad(r.dateKey))):erbrachtZeilen()).forEach(r=>{
+  (wo?D.raw.filter(r=>r.src==='thevea'&&tvRowPasst(r,theraNames)&&inWo(pad(r.dateKey))&&pad(r.dateKey)<=h0):erbrachtZeilen()).forEach(r=>{
     const mo=mon(r.month),m=wo?mk(M,r.standort+'|'+mo,()=>mAgg(r.standort,mo)):M[r.standort+'|'+mo];
     if(m&&wo&&!m.quelle)m.quelle='thevea';
     if(m&&m.quelle==='thevea')m.kalender+=r.price;
