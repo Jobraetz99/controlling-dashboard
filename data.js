@@ -172,7 +172,7 @@ function tvWoche(d){
   return 1+Math.round(((t-fw)/864e5-3+(fw.getUTCDay()+6)%7)/7);
 }
 function tvVoMap(ueb){
-  const m={};const nodes=ueb&&ueb.data&&ueb.data.verordnungUebersicht&&ueb.data.verordnungUebersicht.nodes||[];
+  const m={};const ud=ueb&&ueb.data,uu=ud&&((ud.verordnungUebersichtKontext&&ud.verordnungUebersichtKontext.verordnungUebersicht)||ud.verordnungUebersicht);const nodes=uu&&uu.nodes||[]; // thevea ab 26.11: …Kontext
   nodes.forEach(n=>{if(n&&n.id!=null)m[n.id]=n;});return m;
 }
 function tvDetMap(det){
